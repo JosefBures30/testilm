@@ -144,6 +144,7 @@ services:
       PROVISIONING_API_URL: ""
       PROVISIONING_API_KEY: ""
       INTERNAL_OAUTH_SECRET: ${OIDC_CLIENT_SECRET}
+      DEPLOYER_NAME: "JOSEF BURES, josef.bures@gmail.com"
       JAVA_OPTS: -Xms512m -Xmx2048m
     depends_on:
       postgres:

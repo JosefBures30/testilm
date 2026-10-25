@@ -338,6 +338,8 @@ spec:
             {{- end }}
             - name: PROXY_ENABLED
               value: {{ .Values.global.proxy.enabled | quote }}
+            - name: DEPLOYER_NAME
+              value: {{ .Values.core.environment.DEPLOYER_NAME | default "default" | quote }}
             {{- if .Values.global.proxy.enabled }}
             - name: PROXY_INSTANCE_ID
               valueFrom:

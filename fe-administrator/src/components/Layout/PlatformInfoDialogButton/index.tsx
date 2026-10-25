@@ -77,13 +77,17 @@ const PlatformInfoDialogLink = ({ initiallyOpen = false, forceOpen }: PlatformIn
                           id: 'db',
                           columns: [platformInfo.db.system, platformInfo.db.version, ''],
                       },
+                      {
+                          id: 'builder',
+                          columns: ['BUILDER', platformInfo.builder, ''],
+                      },
                   ]
                 : [],
         [platformInfo, buildTimeFormatted, coreBuildTimeFormatted],
     );
 
     const copyText = platformInfo
-        ? `${platformInfo.app.name}: ${platformInfo.app.version} (${coreBuildTimeFormatted})\nILM Frontend: ${packageJson.version} (${buildTimeFormatted})\n${platformInfo.db.system}: ${platformInfo.db.version}`
+        ? `${platformInfo.app.name}: ${platformInfo.app.version} (${coreBuildTimeFormatted})\nILM Frontend: ${packageJson.version} (${buildTimeFormatted})\n${platformInfo.db.system}: ${platformInfo.db.version}\nBUILDER: ${platformInfo.builder}`
         : '';
 
     return (

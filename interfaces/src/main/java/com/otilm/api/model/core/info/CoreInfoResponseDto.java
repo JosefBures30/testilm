@@ -16,4 +16,7 @@ public class CoreInfoResponseDto {
     @Schema(description = "Database information", requiredMode = Schema.RequiredMode.REQUIRED)
     private DatabaseInfoDto db;
 
+    @Schema(description = "Name of the builder or deployer", requiredMode = Schema.RequiredMode.REQUIRED)
+    private String builder;
+
 }

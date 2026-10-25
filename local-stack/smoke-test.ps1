@@ -45,8 +45,15 @@ if ($LASTEXITCODE -ne 0) {
     throw 'Authenticated Core role-list request failed.'
 }
 
+$platformInfoJson = & curl.exe --fail --silent --show-error `
+    "$baseUrl/api/v1/info" --header $authorization
+if ($LASTEXITCODE -ne 0) {
+    throw 'Authenticated Core platform-info request failed.'
+}
+
 $users = ConvertFrom-Json -InputObject $usersJson
 $roles = ConvertFrom-Json -InputObject $rolesJson
+$platformInfo = ConvertFrom-Json -InputObject $platformInfoJson
 $admin = $users | Where-Object { $_.username -eq $credentials['ILM_ADMIN_USERNAME'] }
 $roleNames = @($roles | ForEach-Object { $_.name })
 
@@ -56,7 +63,20 @@ if (-not $admin) {
 if ($roleNames -notcontains 'superadmin') {
     throw 'Core did not return the expected superadmin role.'
 }
+if (-not $platformInfo.app.name -or -not $platformInfo.app.version) {
+    throw 'Core platform info did not include the Core application name and version.'
+}
+if ($platformInfo.db.system -ne 'PostgreSQL' -or -not $platformInfo.db.version) {
+    throw 'Core platform info did not include the PostgreSQL system and version.'
+}
+$expectedBuilder = 'JOSEF BURES, josef.bures@gmail.com'
+if ($platformInfo.builder -ne $expectedBuilder) {
+    throw "Core platform info returned builder '$($platformInfo.builder)' instead of the configured builder."
+}
 
 Write-Output 'PASS: Keycloak issued an access token.'
 Write-Output "PASS: Core returned $($users.Count) user(s), including the ILM administrator."
 Write-Output "PASS: Core returned $($roles.Count) role(s), including superadmin."
+Write-Output "PASS: Platform info returned Core $($platformInfo.app.version)."
+Write-Output "PASS: Platform info returned $($platformInfo.db.system) $($platformInfo.db.version)."
+Write-Output "PASS: Platform info returned BUILDER '$($platformInfo.builder)'."

@@ -36,4 +36,10 @@ export interface CoreInfoResponseDto {
      * @memberof CoreInfoResponseDto
      */
     db: DatabaseInfoDto;
+    /**
+     * Name of the builder or deployer (added as part of the test)
+     * @type {string}
+     * @memberof CoreInfoResponseDto
+     */
+    builder: string;
 }

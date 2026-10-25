@@ -1,11 +1,13 @@
 import { test, expect } from '../../../../playwright/ct-test';
 import { slice as infoSlice } from 'ducks/info';
 import PlatformInfoDialogLink from './index';
+import PlatformInfoDialogTestHarness from './PlatformInfoDialogTestHarness';
 import { createMockStore, withProviders } from 'utils/test-helpers';
 
 const mockPlatformInfo = {
     app: { name: 'Core', version: '2.16.4-SNAPSHOT' },
     db: { system: 'PostgreSQL', version: '15.6' },
+    builder: 'Test Builder',
 };
 
 const preloadedState = {
@@ -62,5 +64,13 @@ test.describe('PlatformInfoDialogButton', () => {
         await mount(withProviders(<PlatformInfoDialogLink forceOpen={true} />, { store }));
 
         await expect(page.getByTestId('footer-version-info-link')).toBeVisible();
+    });
+
+    test('shows builder information in platform versions', async ({ mount, page }) => {
+        await mount(<PlatformInfoDialogTestHarness />);
+
+        const dialog = page.getByTestId('platform-info-dialog');
+        await expect(dialog.getByText('BUILDER', { exact: true })).toBeVisible();
+        await expect(dialog.getByText('Test Builder', { exact: true })).toBeVisible();
     });
 });
