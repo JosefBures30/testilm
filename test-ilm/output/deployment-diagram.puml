@@ -1,0 +1,130 @@
+@startuml
+title ILM platform - local Docker Compose deployment
+
+left to right direction
+skinparam componentStyle rectangle
+skinparam shadowing false
+
+actor "Operator" as operator
+node "Web browser" as browser {
+  artifact "Administrator UI\n(SPA)" as ui
+}
+
+node "Docker host\n127.0.0.1:8000" as dockerHost {
+  node "Docker Compose network: ilm-local_default" as compose {
+    component "Kong gateway\n:8000" as kong
+    component "Core\nSpring Boot :8080" as core
+    component "Auth\nASP.NET :8080" as auth
+    component "OPA\n:8181" as opa
+    component "OPA policy bundle server\nNginx :8080" as policies
+    component "Scheduler\nSpring Boot :8080" as scheduler
+    component "Keycloak\nHTTP :8080, HTTPS :8443" as keycloak
+    component "Administrator frontend\nNginx :8080" as frontend
+    queue "RabbitMQ\nAMQP :5672" as rabbit
+    database "PostgreSQL :5432\ncore / keycloak data" as postgres
+
+    component "Register OIDC\n(one-shot init job)" as register
+    component "Generate admin certificate\n(one-shot init job)" as certificate
+  }
+
+  folder "Generated local files" as generated {
+    artifact "Realm import\nRabbitMQ definitions\nAdmin certificate" as configFiles
+  }
+}
+
+operator --> browser
+browser --> kong : HTTP
+note on link
+  Published only on host loopback:
+  http://localhost:8000
+end note
+
+kong --> frontend : /administrator/**
+kong --> core : /api/**\n/login, /logout
+kong --> keycloak : /kc/**
+
+core --> postgres : JDBC
+auth --> postgres : SQL
+keycloak --> postgres : JDBC
+scheduler --> postgres : JDBC
+
+core --> auth : HTTP :8080\nusers, roles, permissions
+core --> opa : HTTP :8181\npolicy decisions
+opa --> policies : HTTP :8080\nfetch policy bundle
+core --> scheduler : HTTP :8080\nscheduled jobs
+core --> rabbit : AMQP :5672\nplatform events / jobs
+scheduler --> rabbit : AMQP :5672\nscheduled work
+
+register --> core : HTTP :8080\ncreate local admin\nregister OIDC provider
+register --> keycloak : HTTP :8080\ncheck realm discovery
+certificate --> configFiles : write generated certificate
+keycloak --> configFiles : import realm
+rabbit --> configFiles : load definitions
+register --> configFiles : read certificate
+
+note right of kong
+  Reverse-proxy routes
+  /administrator -> frontend
+  /api            -> Core
+  /login, /logout -> Core
+  /kc             -> Keycloak
+end note
+
+note right of core
+  Core API groups
+  - REST management: certificate and cryptographic asset inventories
+  - Profiles: RA, token, compliance, ACME, SCEP, CMP, TSP
+  - Connectors, discovery, workflows and scheduled jobs
+  - Settings, users/roles, audit, notifications and dashboard
+  - ACME, SCEP and CMP client protocols
+  - Liveness/readiness: /api/v1/health/*
+end note
+
+note right of auth
+  Auth API groups
+  - Users, roles and permissions
+  - Health: /health
+end note
+
+note right of opa
+  OPA API groups
+  - Authorization decisions: /v1/data/*
+  - Health and bundle readiness: /health?bundles
+end note
+
+note right of policies
+  Policy bundle HTTP endpoint
+  GET /bundles/bundle.tar.gz
+end note
+
+note right of scheduler
+  Scheduler API groups
+  - Job scheduling / management
+  - Health: /health
+end note
+
+note right of keycloak
+  Identity and access APIs
+  - OIDC discovery, login, token and logout
+  - Keycloak administration
+  - Publicly routed under /kc
+end note
+
+note right of rabbit
+  Messaging API
+  - AMQP queues and exchanges
+  - Used internally by Core and Scheduler
+end note
+
+note bottom of postgres
+  Shared local database service.
+  Core, Auth and Scheduler use application data;
+  Keycloak uses the keycloak schema.
+end note
+
+legend bottom
+  Deployment represents the development stack in test-ilm/compose.yaml.
+  Connectors and external certificate authorities / timestamp providers
+  are integration targets, not deployed by this Compose stack.
+endlegend
+@enduml

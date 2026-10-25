@@ -4,6 +4,9 @@ This development-only Docker Compose stack runs Core, the administrator UI,
 Auth, OPA policies, Scheduler, RabbitMQ, PostgreSQL, Keycloak, and Kong. The
 gateway publishes only on `127.0.0.1:8000`.
 
+See [deployment-diagram.puml](./deployment-diagram.puml) for the component
+deployment and the main API groups exposed by each service.
+
 From the repository root, prepare the generated realm and queue definitions:
 
 ```powershell
