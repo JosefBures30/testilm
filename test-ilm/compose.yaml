@@ -34,6 +34,12 @@ services:
 
   auth-opa-policies:
     image: hub.omnitrustregistry.com/ilm/auth-opa-policies:develop-latest
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/bundles/bundle.tar.gz"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
     restart: unless-stopped
 
   opa:
@@ -46,7 +52,20 @@ services:
       - --set=bundles.nginx.service=nginx
       - --set=bundles.nginx.resource=bundles/bundle.tar.gz
     depends_on:
-      - auth-opa-policies
+      auth-opa-policies:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - /opa
+        - eval
+        - --fail
+        - --format=raw
+        - 'http.send({"method":"GET","url":"http://127.0.0.1:8181/health?bundles"}).status_code == 200; true'
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
     restart: unless-stopped
 
   auth:
@@ -60,6 +79,12 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 60s
     restart: unless-stopped
 
   scheduler:
@@ -79,6 +104,12 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 60s
     restart: unless-stopped
 
   keycloak:
@@ -103,6 +134,20 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - bash
+        - -ec
+        - |
+          exec 3<>/dev/tcp/127.0.0.1/8080
+          printf 'GET /kc/realms/ILM/.well-known/openid-configuration HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3
+          IFS=' ' read -r _ status _ <&3
+          test "$$status" = 200
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 90s
     restart: unless-stopped
 
   admin-certificate:
@@ -152,17 +197,29 @@ services:
       rabbitmq:
         condition: service_healthy
       auth:
-        condition: service_started
+        condition: service_healthy
       opa:
-        condition: service_started
+        condition: service_healthy
       scheduler:
-        condition: service_started
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/api/v1/health/readiness"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 90s
     restart: unless-stopped
 
   frontend-administrator:
     image: ilm/frontend-administrator:develop-latest
     volumes:
       - ./config.js:/usr/share/nginx/html/config.js:ro
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
     restart: unless-stopped
 
   gateway:
@@ -178,9 +235,12 @@ services:
     volumes:
       - ./kong.yml:/etc/kong/kong.yml:ro
     depends_on:
-      - core
-      - frontend-administrator
-      - keycloak
+      core:
+        condition: service_healthy
+      frontend-administrator:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
     restart: unless-stopped
 
   register-oidc:
@@ -198,9 +258,9 @@ services:
       - ./generated:/certs:ro
     depends_on:
       core:
-        condition: service_started
+        condition: service_healthy
       keycloak:
-        condition: service_started
+        condition: service_healthy
       admin-certificate:
         condition: service_completed_successfully
     network_mode: service:core

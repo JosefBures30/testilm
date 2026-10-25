@@ -45,6 +45,14 @@ docker compose -f .\compose.yaml ps
 docker compose -f .\compose.yaml logs register-oidc
 ```
 
+`docker compose ps` reports health for the services with configured health
+checks, including Core, Auth, Scheduler, Keycloak, the administrator frontend,
+the policy bundle server, OPA, the gateway, PostgreSQL, and RabbitMQ. OPA's
+health check uses its built-in HTTP client to query its own bundle readiness
+endpoint, so no extra utilities are needed in its static image.
+`admin-certificate` and `register-oidc` are one-shot jobs; inspect them with
+`docker compose ps -a` and the registration logs.
+
 Stop the services with `docker compose -f .\compose.yaml down`. To preserve
 local data, do not use `down -v`. This configuration is for local development,
 not production: it uses HTTP and generated development credentials.
