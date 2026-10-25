@@ -1,0 +1,3107 @@
+{
+  "version": "2.14",
+  "children": [
+    {
+      "type": "frame",
+      "id": "B9QnYc",
+      "x": 0,
+      "y": 0,
+      "name": "Toast Notifications — Light",
+      "clip": true,
+      "width": 960,
+      "fill": "$color.white",
+      "layout": "vertical",
+      "gap": 32,
+      "padding": 40,
+      "children": [
+        {
+          "type": "frame",
+          "id": "e8kBf0",
+          "name": "Header",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": 6,
+          "children": [
+            {
+              "type": "text",
+              "id": "pOGpA",
+              "name": "Title",
+              "fill": "#1f2937",
+              "content": "Toast Notifications",
+              "fontFamily": "Inter",
+              "fontSize": 28,
+              "fontWeight": "700"
+            },
+            {
+              "type": "text",
+              "id": "NB7eW",
+              "name": "Subtitle",
+              "fill": "#525252",
+              "textGrowth": "fixed-width",
+              "width": "fill_container",
+              "content": "Bottom-right toast notification stack with three severity levels — success, info, and danger. Toasts auto-dismiss after 6 seconds (except errors), support long-message expansion, and stack with newest at the bottom.",
+              "lineHeight": 1.4,
+              "fontFamily": "Inter",
+              "fontSize": 14,
+              "fontWeight": "normal"
+            }
+          ]
+        },
+        {
+          "type": "rectangle",
+          "id": "S3k4O",
+          "name": "Divider",
+          "fill": "$color.gray-200",
+          "width": "fill_container",
+          "height": 1
+        },
+        {
+          "type": "frame",
+          "id": "O1QKMv",
+          "name": "Card Anatomy",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": 16,
+          "children": [
+            {
+              "type": "text",
+              "id": "y0ND5",
+              "name": "Section Label",
+              "fill": "#6e6e6e",
+              "content": "CARD ANATOMY",
+              "fontFamily": "Inter",
+              "fontSize": 12,
+              "fontWeight": "700",
+              "letterSpacing": 0.6
+            },
+            {
+              "type": "frame",
+              "id": "O4fU9B",
+              "name": "Anatomy Row",
+              "width": "fill_container",
+              "gap": 40,
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "P0Oif8",
+                  "name": "Toast / Success",
+                  "clip": true,
+                  "width": 420,
+                  "fill": "$color.white",
+                  "cornerRadius": 8,
+                  "stroke": "$color.gray-200",
+                  "strokeWidth": 1,
+                  "strokeAlignment": "inner",
+                  "effect": {
+                    "type": "shadow",
+                    "shadowType": "outer",
+                    "color": "#0000001a",
+                    "offset": {
+                      "x": 0,
+                      "y": 4
+                    },
+                    "blur": 12
+                  },
+                  "layout": "vertical",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "zyzM4",
+                      "name": "Content Row",
+                      "width": "fill_container",
+                      "gap": 8,
+                      "padding": [
+                        12,
+                        12,
+                        12,
+                        20
+                      ],
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "TLqX9",
+                          "name": "Severity Icon",
+                          "width": 16,
+                          "height": 16,
+                          "icon": "circle-check",
+                          "library": "lucide",
+                          "fill": "#0d9488"
+                        },
+                        {
+                          "type": "text",
+                          "id": "oRM0M",
+                          "name": "Message",
+                          "fill": "#1f2937",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "RA profile updated successfully.",
+                          "lineHeight": 1.4,
+                          "fontFamily": "Inter",
+                          "fontSize": 14,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "dIZw7",
+                          "name": "Close Button",
+                          "width": 24,
+                          "height": 24,
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "G0raW",
+                              "name": "X Icon",
+                              "width": 14,
+                              "height": 14,
+                              "icon": "x",
+                              "library": "lucide",
+                              "fill": "#6e6e6e"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "rectangle",
+                      "id": "c0DQ5s",
+                      "name": "Progress Bar",
+                      "fill": "#0d9488",
+                      "width": "fill_container",
+                      "height": 3
+                    },
+                    {
+                      "type": "rectangle",
+                      "id": "r6P9KG",
+                      "layoutPosition": "absolute",
+                      "x": 0,
+                      "y": 0,
+                      "name": "Accent Border",
+                      "fill": "#0d9488",
+                      "width": 4,
+                      "height": 800
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "YnZVE",
+                  "name": "Annotations",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 10,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "O3kQQl",
+                      "name": "A1",
+                      "fill": "#525252",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "420px wide, 8px corner radius, clip: true",
+                      "lineHeight": 1.4,
+                      "fontFamily": "Inter",
+                      "fontSize": 12,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "text",
+                      "id": "aKvdG",
+                      "name": "A2",
+                      "fill": "#525252",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "1px gray-200 border (dark: neutral-700)",
+                      "lineHeight": 1.4,
+                      "fontFamily": "Inter",
+                      "fontSize": 12,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "text",
+                      "id": "FJ08a",
+                      "name": "A3",
+                      "fill": "#525252",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "4px colored left accent border (severity color)",
+                      "lineHeight": 1.4,
+                      "fontFamily": "Inter",
+                      "fontSize": 12,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "text",
+                      "id": "i74HxQ",
+                      "name": "A4",
+                      "fill": "#525252",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "12px internal padding",
+                      "lineHeight": 1.4,
+                      "fontFamily": "Inter",
+                      "fontSize": 12,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "text",
+                      "id": "s5FBz",
+                      "name": "A5",
+                      "fill": "#525252",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "16px severity icon, top-aligned with text",
+                      "lineHeight": 1.4,
+                      "fontFamily": "Inter",
+                      "fontSize": 12,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "text",
+                      "id": "kVMTs",
+                      "name": "A6",
+                      "fill": "#525252",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "14px message text, gray-800 (dark: neutral-200)",
+                      "lineHeight": 1.4,
+                      "fontFamily": "Inter",
+                      "fontSize": 12,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "text",
+                      "id": "v6TG2e",
+                      "name": "A7",
+                      "fill": "#525252",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "Close button (X icon) top-right",
+                      "lineHeight": 1.4,
+                      "fontFamily": "Inter",
+                      "fontSize": 12,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "text",
+                      "id": "C21uZD",
+                      "name": "A8",
+                      "fill": "#525252",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "Drop shadow: 0 4px 12px rgba(0,0,0,0.1)",
+                      "lineHeight": 1.4,
+                      "fontFamily": "Inter",
+                      "fontSize": 12,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "text",
+                      "id": "qhYWn",
+                      "name": "A9",
+                      "fill": "#525252",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "Progress bar (3px): auto-dismiss timer, 6s duration. Pauses on hover/focus.",
+                      "lineHeight": 1.4,
+                      "fontFamily": "Inter",
+                      "fontSize": 12,
+                      "fontWeight": "600"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "rectangle",
+          "id": "jo0rs",
+          "name": "Divider",
+          "fill": "$color.gray-200",
+          "width": "fill_container",
+          "height": 1
+        },
+        {
+          "type": "frame",
+          "id": "C2vNye",
+          "name": "Severity Variants",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": 16,
+          "children": [
+            {
+              "type": "text",
+              "id": "zuO6z",
+              "name": "Section Label",
+              "fill": "#6e6e6e",
+              "content": "SEVERITY VARIANTS",
+              "fontFamily": "Inter",
+              "fontSize": 12,
+              "fontWeight": "700",
+              "letterSpacing": 0.6
+            },
+            {
+              "type": "frame",
+              "id": "xNV88",
+              "name": "Variants List",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": 12,
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "Jjt6T",
+                  "name": "Variant / Success",
+                  "width": "fill_container",
+                  "gap": 20,
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "yx9QD",
+                      "name": "Toast / Success",
+                      "clip": true,
+                      "width": 420,
+                      "fill": "$color.white",
+                      "cornerRadius": 8,
+                      "stroke": "$color.gray-200",
+                      "strokeWidth": 1,
+                      "strokeAlignment": "inner",
+                      "effect": {
+                        "type": "shadow",
+                        "shadowType": "outer",
+                        "color": "#0000001a",
+                        "offset": {
+                          "x": 0,
+                          "y": 4
+                        },
+                        "blur": 12
+                      },
+                      "layout": "vertical",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "jweEO",
+                          "name": "Content Row",
+                          "width": "fill_container",
+                          "gap": 8,
+                          "padding": [
+                            12,
+                            12,
+                            12,
+                            20
+                          ],
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "n4l3G",
+                              "name": "Icon",
+                              "width": 16,
+                              "height": 16,
+                              "icon": "circle-check",
+                              "library": "lucide",
+                              "fill": "#0d9488"
+                            },
+                            {
+                              "type": "text",
+                              "id": "y5PVK",
+                              "name": "Message",
+                              "fill": "#1f2937",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "RA profile updated successfully.",
+                              "lineHeight": 1.4,
+                              "fontFamily": "Inter",
+                              "fontSize": 14,
+                              "fontWeight": "normal"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "df7dQ",
+                              "name": "Close Button",
+                              "width": 24,
+                              "height": 24,
+                              "justifyContent": "center",
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "icon",
+                                  "id": "iKsoq",
+                                  "name": "X",
+                                  "width": 14,
+                                  "height": 14,
+                                  "icon": "x",
+                                  "library": "lucide",
+                                  "fill": "#6e6e6e"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "rectangle",
+                          "id": "KsfLU",
+                          "name": "Progress Bar",
+                          "fill": "#0d9488",
+                          "width": "fill_container",
+                          "height": 3
+                        },
+                        {
+                          "type": "rectangle",
+                          "id": "orjzh",
+                          "layoutPosition": "absolute",
+                          "x": 0,
+                          "y": 0,
+                          "name": "Accent",
+                          "fill": "#0d9488",
+                          "width": 4,
+                          "height": 800
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "LVPZk",
+                      "name": "Note",
+                      "fill": "#525252",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "Auto-dismisses in 6s. Teal accent + progress bar.",
+                      "lineHeight": 1.5,
+                      "fontFamily": "Inter",
+                      "fontSize": 12,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "x7iVK",
+                  "name": "Variant / Info",
+                  "width": "fill_container",
+                  "gap": 20,
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "I3cG49",
+                      "name": "Toast / Info",
+                      "clip": true,
+                      "width": 420,
+                      "fill": "$color.white",
+                      "cornerRadius": 8,
+                      "stroke": "$color.gray-200",
+                      "strokeWidth": 1,
+                      "strokeAlignment": "inner",
+                      "effect": {
+                        "type": "shadow",
+                        "shadowType": "outer",
+                        "color": "#0000001a",
+                        "offset": {
+                          "x": 0,
+                          "y": 4
+                        },
+                        "blur": 12
+                      },
+                      "layout": "vertical",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "g6YGz",
+                          "name": "Content Row",
+                          "width": "fill_container",
+                          "gap": 8,
+                          "padding": [
+                            12,
+                            12,
+                            12,
+                            20
+                          ],
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "p8lBsj",
+                              "name": "Icon",
+                              "width": 16,
+                              "height": 16,
+                              "icon": "info",
+                              "library": "lucide",
+                              "fill": "$color.blue-500"
+                            },
+                            {
+                              "type": "text",
+                              "id": "FlDtj",
+                              "name": "Message",
+                              "fill": "#1f2937",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "Bulk RA profile update finished. 42 of 44 certificates were processed.",
+                              "lineHeight": 1.4,
+                              "fontFamily": "Inter",
+                              "fontSize": 14,
+                              "fontWeight": "normal"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "tnlVg",
+                              "name": "Close Button",
+                              "width": 24,
+                              "height": 24,
+                              "justifyContent": "center",
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "icon",
+                                  "id": "WCDDX",
+                                  "name": "X",
+                                  "width": 14,
+                                  "height": 14,
+                                  "icon": "x",
+                                  "library": "lucide",
+                                  "fill": "#6e6e6e"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "rectangle",
+                          "id": "axox7",
+                          "name": "Progress Bar",
+                          "fill": "$color.blue-500",
+                          "width": "fill_container",
+                          "height": 3
+                        },
+                        {
+                          "type": "rectangle",
+                          "id": "iOUXL",
+                          "layoutPosition": "absolute",
+                          "x": 0,
+                          "y": 0,
+                          "name": "Accent",
+                          "fill": "$color.blue-500",
+                          "width": 4,
+                          "height": 800
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "G9kPsK",
+                      "name": "Note",
+                      "fill": "#525252",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "Auto-dismisses in 6s. Blue accent + progress bar.",
+                      "lineHeight": 1.5,
+                      "fontFamily": "Inter",
+                      "fontSize": 12,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "bkrpe",
+                  "name": "Variant / Danger",
+                  "width": "fill_container",
+                  "gap": 20,
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "QfPZU",
+                      "name": "Toast / Danger",
+                      "clip": true,
+                      "width": 420,
+                      "fill": "$color.white",
+                      "cornerRadius": 8,
+                      "stroke": "$color.gray-200",
+                      "strokeWidth": 1,
+                      "strokeAlignment": "inner",
+                      "effect": {
+                        "type": "shadow",
+                        "shadowType": "outer",
+                        "color": "#0000001a",
+                        "offset": {
+                          "x": 0,
+                          "y": 4
+                        },
+                        "blur": 12
+                      },
+                      "layout": "vertical",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "K6AIMI",
+                          "name": "Content Row",
+                          "width": "fill_container",
+                          "gap": 8,
+                          "padding": [
+                            12,
+                            12,
+                            12,
+                            20
+                          ],
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "ktyKc",
+                              "name": "Icon",
+                              "width": 16,
+                              "height": 16,
+                              "icon": "circle-alert",
+                              "library": "lucide",
+                              "fill": "$color.red-500"
+                            },
+                            {
+                              "type": "text",
+                              "id": "p00MCp",
+                              "name": "Message",
+                              "fill": "#1f2937",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "Failed to synchronize certificates (500): the connector returned an unexpected response while processing the discovery batch.",
+                              "lineHeight": 1.4,
+                              "fontFamily": "Inter",
+                              "fontSize": 14,
+                              "fontWeight": "normal"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "mv3QP",
+                              "name": "Close Button",
+                              "width": 24,
+                              "height": 24,
+                              "justifyContent": "center",
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "icon",
+                                  "id": "l4Yn1R",
+                                  "name": "X",
+                                  "width": 14,
+                                  "height": 14,
+                                  "icon": "x",
+                                  "library": "lucide",
+                                  "fill": "#6e6e6e"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "rectangle",
+                          "id": "bVyj4",
+                          "layoutPosition": "absolute",
+                          "x": 0,
+                          "y": 0,
+                          "name": "Accent",
+                          "fill": "$color.red-500",
+                          "width": 4,
+                          "height": 800
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "oxIR6",
+                      "name": "Note",
+                      "fill": "#525252",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "Persists until dismissed — no progress bar. Errors require user acknowledgment.",
+                      "lineHeight": 1.5,
+                      "fontFamily": "Inter",
+                      "fontSize": 12,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "rectangle",
+          "id": "Giuno",
+          "name": "Divider",
+          "fill": "$color.gray-200",
+          "width": "fill_container",
+          "height": 1
+        },
+        {
+          "type": "frame",
+          "id": "LfeMK",
+          "name": "Expanded State",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": 16,
+          "children": [
+            {
+              "type": "text",
+              "id": "B8qeW",
+              "name": "Section Label",
+              "fill": "#6e6e6e",
+              "content": "EXPANDED STATE",
+              "fontFamily": "Inter",
+              "fontSize": 12,
+              "fontWeight": "700",
+              "letterSpacing": 0.6
+            },
+            {
+              "type": "frame",
+              "id": "trvvW",
+              "name": "States Row",
+              "width": "fill_container",
+              "gap": 24,
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "tshZF",
+                  "name": "Collapsed",
+                  "layout": "vertical",
+                  "gap": 8,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "az3k2",
+                      "name": "State Label",
+                      "fill": "#525252",
+                      "content": "Collapsed (4-line clamp)",
+                      "fontFamily": "Inter",
+                      "fontSize": 12,
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "k6Di9",
+                      "name": "Toast / Collapsed",
+                      "clip": true,
+                      "width": 420,
+                      "fill": "$color.white",
+                      "cornerRadius": 8,
+                      "stroke": "$color.gray-200",
+                      "strokeWidth": 1,
+                      "strokeAlignment": "inner",
+                      "effect": {
+                        "type": "shadow",
+                        "shadowType": "outer",
+                        "color": "#0000001a",
+                        "offset": {
+                          "x": 0,
+                          "y": 4
+                        },
+                        "blur": 12
+                      },
+                      "layout": "vertical",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "C5Obat",
+                          "name": "Content Row",
+                          "width": "fill_container",
+                          "gap": 8,
+                          "padding": [
+                            12,
+                            12,
+                            8,
+                            20
+                          ],
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "B2VWb",
+                              "name": "Icon",
+                              "width": 16,
+                              "height": 16,
+                              "icon": "circle-alert",
+                              "library": "lucide",
+                              "fill": "$color.red-500"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "m10bBP",
+                              "name": "Text Column",
+                              "width": "fill_container",
+                              "layout": "vertical",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "BTl5r",
+                                  "name": "Message",
+                                  "fill": "#1f2937",
+                                  "textGrowth": "fixed-width-height",
+                                  "width": "fill_container",
+                                  "height": 78,
+                                  "content": "Failed to synchronize certificates (500): the connector returned an unexpected response while processing the discovery batch. Certificate 0 could not be validated against the...",
+                                  "lineHeight": 1.4,
+                                  "fontFamily": "Inter",
+                                  "fontSize": 14,
+                                  "fontWeight": "normal"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "p53NUI",
+                                  "name": "Actions",
+                                  "gap": 4,
+                                  "padding": [
+                                    4,
+                                    0,
+                                    0,
+                                    0
+                                  ],
+                                  "alignItems": "center",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "n176bT",
+                                      "name": "Show More",
+                                      "fill": "#1f2937",
+                                      "content": "Show more",
+                                      "fontFamily": "Inter",
+                                      "fontSize": 12,
+                                      "fontWeight": "500"
+                                    },
+                                    {
+                                      "type": "icon",
+                                      "id": "AfrQf",
+                                      "name": "Chevron",
+                                      "width": 12,
+                                      "height": 12,
+                                      "icon": "chevron-down",
+                                      "library": "lucide",
+                                      "fill": "#1f2937"
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "Kdq07",
+                              "name": "Close Button",
+                              "width": 24,
+                              "height": 24,
+                              "justifyContent": "center",
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "icon",
+                                  "id": "h6Wt9A",
+                                  "name": "X",
+                                  "width": 14,
+                                  "height": 14,
+                                  "icon": "x",
+                                  "library": "lucide",
+                                  "fill": "#6e6e6e"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "rectangle",
+                          "id": "WG4Nu",
+                          "layoutPosition": "absolute",
+                          "x": 0,
+                          "y": 0,
+                          "name": "Accent",
+                          "fill": "$color.red-500",
+                          "width": 4,
+                          "height": 800
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "XxGwk",
+                  "name": "Expanded",
+                  "layout": "vertical",
+                  "gap": 8,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "yxPXO",
+                      "name": "State Label",
+                      "fill": "#525252",
+                      "content": "Expanded",
+                      "fontFamily": "Inter",
+                      "fontSize": 12,
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "Vx8ob",
+                      "name": "Toast / Expanded",
+                      "clip": true,
+                      "width": 420,
+                      "fill": "$color.white",
+                      "cornerRadius": 8,
+                      "stroke": "$color.gray-200",
+                      "strokeWidth": 1,
+                      "strokeAlignment": "inner",
+                      "effect": {
+                        "type": "shadow",
+                        "shadowType": "outer",
+                        "color": "#0000001a",
+                        "offset": {
+                          "x": 0,
+                          "y": 4
+                        },
+                        "blur": 12
+                      },
+                      "layout": "vertical",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "mwIgJ",
+                          "name": "Content Row",
+                          "width": "fill_container",
+                          "gap": 8,
+                          "padding": [
+                            12,
+                            12,
+                            8,
+                            20
+                          ],
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "ATPFf",
+                              "name": "Icon",
+                              "width": 16,
+                              "height": 16,
+                              "icon": "circle-alert",
+                              "library": "lucide",
+                              "fill": "$color.red-500"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "AQJex",
+                              "name": "Text Column",
+                              "width": "fill_container",
+                              "layout": "vertical",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "o5EEFA",
+                                  "name": "Message",
+                                  "fill": "#1f2937",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container",
+                                  "content": "Failed to synchronize certificates (500): the connector returned an unexpected response while processing the discovery batch. Certificate 0 could not be validated against the configured RA profile. Certificate 1 could not be validated against the configured RA profile. Certificate 2 could not be validated against the configured RA profile. Certificate 3 could not be validated against the configured RA profile.",
+                                  "lineHeight": 1.4,
+                                  "fontFamily": "Inter",
+                                  "fontSize": 14,
+                                  "fontWeight": "normal"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "oS6EG",
+                                  "name": "Actions",
+                                  "gap": 12,
+                                  "padding": [
+                                    4,
+                                    0,
+                                    0,
+                                    0
+                                  ],
+                                  "alignItems": "center",
+                                  "children": [
+                                    {
+                                      "type": "frame",
+                                      "id": "bmX2A",
+                                      "name": "Show Less",
+                                      "gap": 4,
+                                      "alignItems": "center",
+                                      "children": [
+                                        {
+                                          "type": "text",
+                                          "id": "V8JnkM",
+                                          "name": "Label",
+                                          "fill": "#1f2937",
+                                          "content": "Show less",
+                                          "fontFamily": "Inter",
+                                          "fontSize": 12,
+                                          "fontWeight": "500"
+                                        },
+                                        {
+                                          "type": "icon",
+                                          "id": "IMVGG",
+                                          "name": "Chevron",
+                                          "width": 12,
+                                          "height": 12,
+                                          "icon": "chevron-up",
+                                          "library": "lucide",
+                                          "fill": "#1f2937"
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "type": "frame",
+                                      "id": "YT1UP",
+                                      "name": "Copy",
+                                      "gap": 4,
+                                      "alignItems": "center",
+                                      "children": [
+                                        {
+                                          "type": "text",
+                                          "id": "iCzat",
+                                          "name": "Label",
+                                          "fill": "#1f2937",
+                                          "content": "Copy",
+                                          "fontFamily": "Inter",
+                                          "fontSize": 12,
+                                          "fontWeight": "500"
+                                        },
+                                        {
+                                          "type": "icon",
+                                          "id": "PnXUJ",
+                                          "name": "Icon",
+                                          "width": 12,
+                                          "height": 12,
+                                          "icon": "copy",
+                                          "library": "lucide",
+                                          "fill": "#1f2937"
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "ZcuzD",
+                              "name": "Close Button",
+                              "width": 24,
+                              "height": 24,
+                              "justifyContent": "center",
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "icon",
+                                  "id": "pGJ42",
+                                  "name": "X",
+                                  "width": 14,
+                                  "height": 14,
+                                  "icon": "x",
+                                  "library": "lucide",
+                                  "fill": "#6e6e6e"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "rectangle",
+                          "id": "qxDmx",
+                          "layoutPosition": "absolute",
+                          "x": 0,
+                          "y": 0,
+                          "name": "Accent",
+                          "fill": "$color.red-500",
+                          "width": 4,
+                          "height": 800
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "rectangle",
+          "id": "XwWdA",
+          "name": "Divider",
+          "fill": "$color.gray-200",
+          "width": "fill_container",
+          "height": 1
+        },
+        {
+          "type": "frame",
+          "id": "dC1m2",
+          "name": "Stack Behavior",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": 16,
+          "children": [
+            {
+              "type": "text",
+              "id": "k0uOco",
+              "name": "Section Label",
+              "fill": "#6e6e6e",
+              "content": "STACK BEHAVIOR",
+              "fontFamily": "Inter",
+              "fontSize": 12,
+              "fontWeight": "700",
+              "letterSpacing": 0.6
+            },
+            {
+              "type": "text",
+              "id": "N6U9dV",
+              "name": "Description",
+              "fill": "#525252",
+              "textGrowth": "fixed-width",
+              "width": "fill_container",
+              "content": "Toasts stack bottom-right with 8px gap. Newest toast appears at the bottom. A \"Dismiss all\" control appears above the stack when 3+ toasts are visible.",
+              "lineHeight": 1.5,
+              "fontFamily": "Inter",
+              "fontSize": 12,
+              "fontWeight": "normal"
+            },
+            {
+              "type": "frame",
+              "id": "oeS7j",
+              "name": "Viewport Mock",
+              "clip": true,
+              "width": "fill_container",
+              "height": 520,
+              "fill": "$color.gray-100",
+              "cornerRadius": 8,
+              "stroke": "$color.gray-200",
+              "strokeWidth": 1,
+              "strokeAlignment": "inner",
+              "layout": "none",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "AZ4Ux",
+                  "layoutPosition": "absolute",
+                  "x": 440,
+                  "y": 188,
+                  "name": "Toast Stack",
+                  "layout": "vertical",
+                  "gap": 8,
+                  "alignItems": "end",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "qPNlX",
+                      "name": "Dismiss All",
+                      "fill": "#525252",
+                      "content": "Dismiss all",
+                      "fontFamily": "Inter",
+                      "fontSize": 13,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "f2SP4",
+                      "name": "Toast / Success",
+                      "clip": true,
+                      "width": 380,
+                      "fill": "$color.white",
+                      "cornerRadius": 8,
+                      "stroke": "$color.gray-200",
+                      "strokeWidth": 1,
+                      "strokeAlignment": "inner",
+                      "effect": {
+                        "type": "shadow",
+                        "shadowType": "outer",
+                        "color": "#0000001a",
+                        "offset": {
+                          "x": 0,
+                          "y": 4
+                        },
+                        "blur": 12
+                      },
+                      "layout": "vertical",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "xpatn",
+                          "name": "Content Row",
+                          "width": "fill_container",
+                          "gap": 8,
+                          "padding": [
+                            10,
+                            10,
+                            10,
+                            18
+                          ],
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "QNLxb",
+                              "name": "Icon",
+                              "width": 16,
+                              "height": 16,
+                              "icon": "circle-check",
+                              "library": "lucide",
+                              "fill": "#0d9488"
+                            },
+                            {
+                              "type": "text",
+                              "id": "svXym",
+                              "name": "Message",
+                              "fill": "#1f2937",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "RA profile updated successfully.",
+                              "lineHeight": 1.4,
+                              "fontFamily": "Inter",
+                              "fontSize": 14,
+                              "fontWeight": "normal"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "sa3Cs",
+                              "name": "Close",
+                              "width": 22,
+                              "height": 22,
+                              "justifyContent": "center",
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "icon",
+                                  "id": "iXtg4",
+                                  "name": "X",
+                                  "width": 13,
+                                  "height": 13,
+                                  "icon": "x",
+                                  "library": "lucide",
+                                  "fill": "#6e6e6e"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "rectangle",
+                          "id": "ZjsXT",
+                          "name": "Progress",
+                          "fill": "#0d9488",
+                          "width": "fill_container",
+                          "height": 3
+                        },
+                        {
+                          "type": "rectangle",
+                          "id": "yjgPP",
+                          "layoutPosition": "absolute",
+                          "x": 0,
+                          "y": 0,
+                          "name": "Accent",
+                          "fill": "#0d9488",
+                          "width": 4,
+                          "height": 800
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "mUqPv",
+                      "name": "Toast / Info",
+                      "clip": true,
+                      "width": 380,
+                      "fill": "$color.white",
+                      "cornerRadius": 8,
+                      "stroke": "$color.gray-200",
+                      "strokeWidth": 1,
+                      "strokeAlignment": "inner",
+                      "effect": {
+                        "type": "shadow",
+                        "shadowType": "outer",
+                        "color": "#0000001a",
+                        "offset": {
+                          "x": 0,
+                          "y": 4
+                        },
+                        "blur": 12
+                      },
+                      "layout": "vertical",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "uv4Ms",
+                          "name": "Content Row",
+                          "width": "fill_container",
+                          "gap": 8,
+                          "padding": [
+                            10,
+                            10,
+                            10,
+                            18
+                          ],
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "mdlB3",
+                              "name": "Icon",
+                              "width": 16,
+                              "height": 16,
+                              "icon": "info",
+                              "library": "lucide",
+                              "fill": "$color.blue-500"
+                            },
+                            {
+                              "type": "text",
+                              "id": "K4vfzD",
+                              "name": "Message",
+                              "fill": "#1f2937",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "Bulk RA profile update finished. 42 of 44 certificates were processed.",
+                              "lineHeight": 1.4,
+                              "fontFamily": "Inter",
+                              "fontSize": 14,
+                              "fontWeight": "normal"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "c25as",
+                              "name": "Close",
+                              "width": 22,
+                              "height": 22,
+                              "justifyContent": "center",
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "icon",
+                                  "id": "U2Nvs",
+                                  "name": "X",
+                                  "width": 13,
+                                  "height": 13,
+                                  "icon": "x",
+                                  "library": "lucide",
+                                  "fill": "#6e6e6e"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "rectangle",
+                          "id": "aRxeX",
+                          "name": "Progress",
+                          "fill": "$color.blue-500",
+                          "width": "fill_container",
+                          "height": 3
+                        },
+                        {
+                          "type": "rectangle",
+                          "id": "KQiNT",
+                          "layoutPosition": "absolute",
+                          "x": 0,
+                          "y": 0,
+                          "name": "Accent",
+                          "fill": "$color.blue-500",
+                          "width": 4,
+                          "height": 800
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "AOnnM",
+                      "name": "Toast / Danger",
+                      "clip": true,
+                      "width": 380,
+                      "fill": "$color.white",
+                      "cornerRadius": 8,
+                      "stroke": "$color.gray-200",
+                      "strokeWidth": 1,
+                      "strokeAlignment": "inner",
+                      "effect": {
+                        "type": "shadow",
+                        "shadowType": "outer",
+                        "color": "#0000001a",
+                        "offset": {
+                          "x": 0,
+                          "y": 4
+                        },
+                        "blur": 12
+                      },
+                      "layout": "vertical",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "a3tWq",
+                          "name": "Content Row",
+                          "width": "fill_container",
+                          "gap": 8,
+                          "padding": [
+                            10,
+                            10,
+                            8,
+                            18
+                          ],
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "V1QDT",
+                              "name": "Icon",
+                              "width": 16,
+                              "height": 16,
+                              "icon": "circle-alert",
+                              "library": "lucide",
+                              "fill": "$color.red-500"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "HzvEk",
+                              "name": "Text Column",
+                              "width": "fill_container",
+                              "layout": "vertical",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "PVG3c",
+                                  "name": "Message",
+                                  "fill": "#1f2937",
+                                  "textGrowth": "fixed-width-height",
+                                  "width": "fill_container",
+                                  "height": 78,
+                                  "content": "Failed to synchronize certificates (500): the connector returned an unexpected response while processing the discovery batch. Certificate 0 could not be...",
+                                  "lineHeight": 1.4,
+                                  "fontFamily": "Inter",
+                                  "fontSize": 14,
+                                  "fontWeight": "normal"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "IKy2K",
+                                  "name": "Actions",
+                                  "gap": 4,
+                                  "padding": [
+                                    4,
+                                    0,
+                                    0,
+                                    0
+                                  ],
+                                  "alignItems": "center",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "an7YD",
+                                      "name": "Show More",
+                                      "fill": "#1f2937",
+                                      "content": "Show more",
+                                      "fontFamily": "Inter",
+                                      "fontSize": 12,
+                                      "fontWeight": "500"
+                                    },
+                                    {
+                                      "type": "icon",
+                                      "id": "JfRbT",
+                                      "name": "Chevron",
+                                      "width": 12,
+                                      "height": 12,
+                                      "icon": "chevron-down",
+                                      "library": "lucide",
+                                      "fill": "#1f2937"
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "A39XTI",
+                              "name": "Close",
+                              "width": 22,
+                              "height": 22,
+                              "justifyContent": "center",
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "icon",
+                                  "id": "XmnQk",
+                                  "name": "X",
+                                  "width": 13,
+                                  "height": 13,
+                                  "icon": "x",
+                                  "library": "lucide",
+                                  "fill": "#6e6e6e"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "rectangle",
+                          "id": "n2tSc0",
+                          "layoutPosition": "absolute",
+                          "x": 0,
+                          "y": 0,
+                          "name": "Accent",
+                          "fill": "$color.red-500",
+                          "width": 4,
+                          "height": 800
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "R5BwZO",
+      "x": 1040,
+      "y": 0,
+      "name": "Toast Notifications — Dark",
+      "clip": true,
+      "width": 960,
+      "fill": "$color.neutral-900",
+      "layout": "vertical",
+      "gap": 32,
+      "padding": 40,
+      "children": [
+        {
+          "type": "frame",
+          "id": "Cda4s",
+          "name": "Header",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": 6,
+          "children": [
+            {
+              "type": "text",
+              "id": "B91uIy",
+              "name": "Title",
+              "fill": "#f5f5f5",
+              "content": "Toast Notifications",
+              "fontFamily": "Inter",
+              "fontSize": 28,
+              "fontWeight": "700"
+            },
+            {
+              "type": "text",
+              "id": "oBqd3",
+              "name": "Subtitle",
+              "fill": "#d4d4d4",
+              "textGrowth": "fixed-width",
+              "width": "fill_container",
+              "content": "Bottom-right toast notification stack with three severity levels — success, info, and danger. Toasts auto-dismiss after 6 seconds (except errors), support long-message expansion, and stack with newest at the bottom.",
+              "lineHeight": 1.4,
+              "fontFamily": "Inter",
+              "fontSize": 14,
+              "fontWeight": "normal"
+            }
+          ]
+        },
+        {
+          "type": "rectangle",
+          "id": "COWn7",
+          "name": "Divider",
+          "fill": "#262626",
+          "width": "fill_container",
+          "height": 1
+        },
+        {
+          "type": "frame",
+          "id": "CpDjt",
+          "name": "Card Anatomy",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": 16,
+          "children": [
+            {
+              "type": "text",
+              "id": "BVhxn",
+              "name": "Section Label",
+              "fill": "#a3a3a3",
+              "content": "CARD ANATOMY",
+              "fontFamily": "Inter",
+              "fontSize": 12,
+              "fontWeight": "700",
+              "letterSpacing": 0.6
+            },
+            {
+              "type": "frame",
+              "id": "HiXp5",
+              "name": "Anatomy Row",
+              "width": "fill_container",
+              "gap": 40,
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "LPrE5",
+                  "name": "Toast / Success",
+                  "clip": true,
+                  "width": 420,
+                  "fill": "#171717",
+                  "cornerRadius": 8,
+                  "stroke": "#262626",
+                  "strokeWidth": 1,
+                  "strokeAlignment": "inner",
+                  "effect": {
+                    "type": "shadow",
+                    "shadowType": "outer",
+                    "color": "#00000033",
+                    "offset": {
+                      "x": 0,
+                      "y": 4
+                    },
+                    "blur": 12
+                  },
+                  "layout": "vertical",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "Gve65",
+                      "name": "Content Row",
+                      "width": "fill_container",
+                      "gap": 8,
+                      "padding": [
+                        12,
+                        12,
+                        12,
+                        20
+                      ],
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "F4kPIJ",
+                          "name": "Icon",
+                          "width": 16,
+                          "height": 16,
+                          "icon": "circle-check",
+                          "library": "lucide",
+                          "fill": "$color.teal-500"
+                        },
+                        {
+                          "type": "text",
+                          "id": "HFDGe",
+                          "name": "Message",
+                          "fill": "#f5f5f5",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "RA profile updated successfully.",
+                          "lineHeight": 1.4,
+                          "fontFamily": "Inter",
+                          "fontSize": 14,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "t5UOaR",
+                          "name": "Close Button",
+                          "width": 24,
+                          "height": 24,
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "hrbGn",
+                              "name": "X",
+                              "width": 14,
+                              "height": 14,
+                              "icon": "x",
+                              "library": "lucide",
+                              "fill": "#a3a3a3"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "rectangle",
+                      "id": "v96e5",
+                      "name": "Progress Bar",
+                      "fill": "$color.teal-500",
+                      "width": "fill_container",
+                      "height": 3
+                    },
+                    {
+                      "type": "rectangle",
+                      "id": "awej0",
+                      "layoutPosition": "absolute",
+                      "x": 0,
+                      "y": 0,
+                      "name": "Accent",
+                      "fill": "$color.teal-500",
+                      "width": 4,
+                      "height": 800
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "flxOU",
+                  "name": "Annotations",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 10,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "qu2q7",
+                      "name": "A1",
+                      "fill": "#d4d4d4",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "Card fill: neutral-800 (#262626)",
+                      "lineHeight": 1.4,
+                      "fontFamily": "Inter",
+                      "fontSize": 12,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "text",
+                      "id": "LX1FA",
+                      "name": "A2",
+                      "fill": "#d4d4d4",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "Border: 1px neutral-700 (#404040)",
+                      "lineHeight": 1.4,
+                      "fontFamily": "Inter",
+                      "fontSize": 12,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "text",
+                      "id": "lPBs6",
+                      "name": "A3",
+                      "fill": "#d4d4d4",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "Text fill: neutral-200 (#e5e5e5)",
+                      "lineHeight": 1.4,
+                      "fontFamily": "Inter",
+                      "fontSize": 12,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "text",
+                      "id": "E1yoyd",
+                      "name": "A4",
+                      "fill": "#d4d4d4",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "Close icon: neutral-500 (#737373)",
+                      "lineHeight": 1.4,
+                      "fontFamily": "Inter",
+                      "fontSize": 12,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "text",
+                      "id": "wKgWC",
+                      "name": "A5",
+                      "fill": "#d4d4d4",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "Accent colors and icons identical to light mode",
+                      "lineHeight": 1.4,
+                      "fontFamily": "Inter",
+                      "fontSize": 12,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "text",
+                      "id": "DpcEz",
+                      "name": "A6",
+                      "fill": "#d4d4d4",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "Shadow: 0 4px 12px rgba(0,0,0,0.2)",
+                      "lineHeight": 1.4,
+                      "fontFamily": "Inter",
+                      "fontSize": 12,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "rectangle",
+          "id": "GHo6J",
+          "name": "Divider",
+          "fill": "#262626",
+          "width": "fill_container",
+          "height": 1
+        },
+        {
+          "type": "frame",
+          "id": "MPIum",
+          "name": "Severity Variants",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": 16,
+          "children": [
+            {
+              "type": "text",
+              "id": "VKzy1",
+              "name": "Section Label",
+              "fill": "#a3a3a3",
+              "content": "SEVERITY VARIANTS",
+              "fontFamily": "Inter",
+              "fontSize": 12,
+              "fontWeight": "700",
+              "letterSpacing": 0.6
+            },
+            {
+              "type": "frame",
+              "id": "HEh5A",
+              "name": "Variants List",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": 12,
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "G0PsU",
+                  "name": "Toast / Success",
+                  "clip": true,
+                  "width": 420,
+                  "fill": "#171717",
+                  "cornerRadius": 8,
+                  "stroke": "#262626",
+                  "strokeWidth": 1,
+                  "strokeAlignment": "inner",
+                  "effect": {
+                    "type": "shadow",
+                    "shadowType": "outer",
+                    "color": "#00000033",
+                    "offset": {
+                      "x": 0,
+                      "y": 4
+                    },
+                    "blur": 12
+                  },
+                  "layout": "vertical",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "wt92r",
+                      "name": "Content Row",
+                      "width": "fill_container",
+                      "gap": 8,
+                      "padding": [
+                        12,
+                        12,
+                        12,
+                        20
+                      ],
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "FXBmV",
+                          "name": "Icon",
+                          "width": 16,
+                          "height": 16,
+                          "icon": "circle-check",
+                          "library": "lucide",
+                          "fill": "$color.teal-500"
+                        },
+                        {
+                          "type": "text",
+                          "id": "cfyMV",
+                          "name": "Message",
+                          "fill": "#f5f5f5",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "RA profile updated successfully.",
+                          "lineHeight": 1.4,
+                          "fontFamily": "Inter",
+                          "fontSize": 14,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "GU0dJ",
+                          "name": "Close Button",
+                          "width": 24,
+                          "height": 24,
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "q1MvF",
+                              "name": "X",
+                              "width": 14,
+                              "height": 14,
+                              "icon": "x",
+                              "library": "lucide",
+                              "fill": "#a3a3a3"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "rectangle",
+                      "id": "nUIdJ",
+                      "name": "Progress Bar",
+                      "fill": "$color.teal-500",
+                      "width": "fill_container",
+                      "height": 3
+                    },
+                    {
+                      "type": "rectangle",
+                      "id": "x36XNS",
+                      "layoutPosition": "absolute",
+                      "x": 0,
+                      "y": 0,
+                      "name": "Accent",
+                      "fill": "$color.teal-500",
+                      "width": 4,
+                      "height": 800
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "p3YN7D",
+                  "name": "Toast / Info",
+                  "clip": true,
+                  "width": 420,
+                  "fill": "#171717",
+                  "cornerRadius": 8,
+                  "stroke": "#262626",
+                  "strokeWidth": 1,
+                  "strokeAlignment": "inner",
+                  "effect": {
+                    "type": "shadow",
+                    "shadowType": "outer",
+                    "color": "#00000033",
+                    "offset": {
+                      "x": 0,
+                      "y": 4
+                    },
+                    "blur": 12
+                  },
+                  "layout": "vertical",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "bieZ5",
+                      "name": "Content Row",
+                      "width": "fill_container",
+                      "gap": 8,
+                      "padding": [
+                        12,
+                        12,
+                        12,
+                        20
+                      ],
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "hjoDR",
+                          "name": "Icon",
+                          "width": 16,
+                          "height": 16,
+                          "icon": "info",
+                          "library": "lucide",
+                          "fill": "$color.blue-500"
+                        },
+                        {
+                          "type": "text",
+                          "id": "k8fh5",
+                          "name": "Message",
+                          "fill": "#f5f5f5",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "Bulk RA profile update finished. 42 of 44 certificates were processed.",
+                          "lineHeight": 1.4,
+                          "fontFamily": "Inter",
+                          "fontSize": 14,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "uagAE",
+                          "name": "Close Button",
+                          "width": 24,
+                          "height": 24,
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "PZdAC",
+                              "name": "X",
+                              "width": 14,
+                              "height": 14,
+                              "icon": "x",
+                              "library": "lucide",
+                              "fill": "#a3a3a3"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "rectangle",
+                      "id": "TqQG2",
+                      "name": "Progress Bar",
+                      "fill": "$color.blue-500",
+                      "width": "fill_container",
+                      "height": 3
+                    },
+                    {
+                      "type": "rectangle",
+                      "id": "pC3D8",
+                      "layoutPosition": "absolute",
+                      "x": 0,
+                      "y": 0,
+                      "name": "Accent",
+                      "fill": "$color.blue-500",
+                      "width": 4,
+                      "height": 800
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "h9mmS",
+                  "name": "Toast / Danger",
+                  "clip": true,
+                  "width": 420,
+                  "fill": "#171717",
+                  "cornerRadius": 8,
+                  "stroke": "#262626",
+                  "strokeWidth": 1,
+                  "strokeAlignment": "inner",
+                  "effect": {
+                    "type": "shadow",
+                    "shadowType": "outer",
+                    "color": "#00000033",
+                    "offset": {
+                      "x": 0,
+                      "y": 4
+                    },
+                    "blur": 12
+                  },
+                  "layout": "vertical",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "Pxguk",
+                      "name": "Content Row",
+                      "width": "fill_container",
+                      "gap": 8,
+                      "padding": [
+                        12,
+                        12,
+                        12,
+                        20
+                      ],
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "dt1yH",
+                          "name": "Icon",
+                          "width": 16,
+                          "height": 16,
+                          "icon": "circle-alert",
+                          "library": "lucide",
+                          "fill": "$color.red-500"
+                        },
+                        {
+                          "type": "text",
+                          "id": "d33Fcd",
+                          "name": "Message",
+                          "fill": "#f5f5f5",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "Failed to synchronize certificates (500): the connector returned an unexpected response while processing the discovery batch.",
+                          "lineHeight": 1.4,
+                          "fontFamily": "Inter",
+                          "fontSize": 14,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "PCA8K",
+                          "name": "Close Button",
+                          "width": 24,
+                          "height": 24,
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "Bfb92",
+                              "name": "X",
+                              "width": 14,
+                              "height": 14,
+                              "icon": "x",
+                              "library": "lucide",
+                              "fill": "#a3a3a3"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "rectangle",
+                      "id": "OOEGX",
+                      "layoutPosition": "absolute",
+                      "x": 0,
+                      "y": 0,
+                      "name": "Accent",
+                      "fill": "$color.red-500",
+                      "width": 4,
+                      "height": 800
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "rectangle",
+          "id": "H4QHR",
+          "name": "Divider",
+          "fill": "#262626",
+          "width": "fill_container",
+          "height": 1
+        },
+        {
+          "type": "frame",
+          "id": "AL6VE",
+          "name": "Expanded State",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": 16,
+          "children": [
+            {
+              "type": "text",
+              "id": "ps3zY",
+              "name": "Section Label",
+              "fill": "#a3a3a3",
+              "content": "EXPANDED STATE",
+              "fontFamily": "Inter",
+              "fontSize": 12,
+              "fontWeight": "700",
+              "letterSpacing": 0.6
+            },
+            {
+              "type": "frame",
+              "id": "ZrvTq",
+              "name": "States Row",
+              "width": "fill_container",
+              "gap": 24,
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "Xc3M3",
+                  "name": "Collapsed",
+                  "layout": "vertical",
+                  "gap": 8,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "VAayG",
+                      "name": "State Label",
+                      "fill": "#d4d4d4",
+                      "content": "Collapsed (4-line clamp)",
+                      "fontFamily": "Inter",
+                      "fontSize": 12,
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "ly1xb",
+                      "name": "Toast / Collapsed",
+                      "clip": true,
+                      "width": 420,
+                      "fill": "#171717",
+                      "cornerRadius": 8,
+                      "stroke": "#262626",
+                      "strokeWidth": 1,
+                      "strokeAlignment": "inner",
+                      "effect": {
+                        "type": "shadow",
+                        "shadowType": "outer",
+                        "color": "#00000033",
+                        "offset": {
+                          "x": 0,
+                          "y": 4
+                        },
+                        "blur": 12
+                      },
+                      "layout": "vertical",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "J2Dyf6",
+                          "name": "Content Row",
+                          "width": "fill_container",
+                          "gap": 8,
+                          "padding": [
+                            12,
+                            12,
+                            8,
+                            20
+                          ],
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "DajBJ",
+                              "name": "Icon",
+                              "width": 16,
+                              "height": 16,
+                              "icon": "circle-alert",
+                              "library": "lucide",
+                              "fill": "$color.red-500"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "CChvy",
+                              "name": "Text Column",
+                              "width": "fill_container",
+                              "layout": "vertical",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "LVHEh",
+                                  "name": "Message",
+                                  "fill": "#f5f5f5",
+                                  "textGrowth": "fixed-width-height",
+                                  "width": "fill_container",
+                                  "height": 78,
+                                  "content": "Failed to synchronize certificates (500): the connector returned an unexpected response while processing the discovery batch. Certificate 0 could not be validated against the...",
+                                  "lineHeight": 1.4,
+                                  "fontFamily": "Inter",
+                                  "fontSize": 14,
+                                  "fontWeight": "normal"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "odP21",
+                                  "name": "Actions",
+                                  "gap": 4,
+                                  "padding": [
+                                    4,
+                                    0,
+                                    0,
+                                    0
+                                  ],
+                                  "alignItems": "center",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "KSMvh",
+                                      "name": "Show More",
+                                      "fill": "#f5f5f5",
+                                      "content": "Show more",
+                                      "fontFamily": "Inter",
+                                      "fontSize": 12,
+                                      "fontWeight": "500"
+                                    },
+                                    {
+                                      "type": "icon",
+                                      "id": "lcMEQ",
+                                      "name": "Chevron",
+                                      "width": 12,
+                                      "height": 12,
+                                      "icon": "chevron-down",
+                                      "library": "lucide",
+                                      "fill": "#f5f5f5"
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "oychA",
+                              "name": "Close",
+                              "width": 24,
+                              "height": 24,
+                              "justifyContent": "center",
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "icon",
+                                  "id": "E3imp",
+                                  "name": "X",
+                                  "width": 14,
+                                  "height": 14,
+                                  "icon": "x",
+                                  "library": "lucide",
+                                  "fill": "#a3a3a3"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "rectangle",
+                          "id": "je3vI",
+                          "layoutPosition": "absolute",
+                          "x": 0,
+                          "y": 0,
+                          "name": "Accent",
+                          "fill": "$color.red-500",
+                          "width": 4,
+                          "height": 800
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "mt5hp",
+                  "name": "Expanded",
+                  "layout": "vertical",
+                  "gap": 8,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "EoLo5",
+                      "name": "State Label",
+                      "fill": "#d4d4d4",
+                      "content": "Expanded",
+                      "fontFamily": "Inter",
+                      "fontSize": 12,
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "iJ5ll",
+                      "name": "Toast / Expanded",
+                      "clip": true,
+                      "width": 420,
+                      "fill": "#171717",
+                      "cornerRadius": 8,
+                      "stroke": "#262626",
+                      "strokeWidth": 1,
+                      "strokeAlignment": "inner",
+                      "effect": {
+                        "type": "shadow",
+                        "shadowType": "outer",
+                        "color": "#00000033",
+                        "offset": {
+                          "x": 0,
+                          "y": 4
+                        },
+                        "blur": 12
+                      },
+                      "layout": "vertical",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "S7zKRu",
+                          "name": "Content Row",
+                          "width": "fill_container",
+                          "gap": 8,
+                          "padding": [
+                            12,
+                            12,
+                            8,
+                            20
+                          ],
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "xVy9v",
+                              "name": "Icon",
+                              "width": 16,
+                              "height": 16,
+                              "icon": "circle-alert",
+                              "library": "lucide",
+                              "fill": "$color.red-500"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "EudHv",
+                              "name": "Text Column",
+                              "width": "fill_container",
+                              "layout": "vertical",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "n294Rt",
+                                  "name": "Message",
+                                  "fill": "#f5f5f5",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container",
+                                  "content": "Failed to synchronize certificates (500): the connector returned an unexpected response while processing the discovery batch. Certificate 0 could not be validated against the configured RA profile. Certificate 1 could not be validated against the configured RA profile. Certificate 2 could not be validated against the configured RA profile. Certificate 3 could not be validated against the configured RA profile.",
+                                  "lineHeight": 1.4,
+                                  "fontFamily": "Inter",
+                                  "fontSize": 14,
+                                  "fontWeight": "normal"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "q4vZT6",
+                                  "name": "Actions",
+                                  "gap": 12,
+                                  "padding": [
+                                    4,
+                                    0,
+                                    0,
+                                    0
+                                  ],
+                                  "alignItems": "center",
+                                  "children": [
+                                    {
+                                      "type": "frame",
+                                      "id": "dC5y0",
+                                      "name": "Show Less",
+                                      "gap": 4,
+                                      "alignItems": "center",
+                                      "children": [
+                                        {
+                                          "type": "text",
+                                          "id": "rTIZ9",
+                                          "name": "Label",
+                                          "fill": "#f5f5f5",
+                                          "content": "Show less",
+                                          "fontFamily": "Inter",
+                                          "fontSize": 12,
+                                          "fontWeight": "500"
+                                        },
+                                        {
+                                          "type": "icon",
+                                          "id": "ZdXqA",
+                                          "name": "Chevron",
+                                          "width": 12,
+                                          "height": 12,
+                                          "icon": "chevron-up",
+                                          "library": "lucide",
+                                          "fill": "#f5f5f5"
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "type": "frame",
+                                      "id": "HVOrs",
+                                      "name": "Copy",
+                                      "gap": 4,
+                                      "alignItems": "center",
+                                      "children": [
+                                        {
+                                          "type": "text",
+                                          "id": "IaGcS",
+                                          "name": "Label",
+                                          "fill": "#f5f5f5",
+                                          "content": "Copy",
+                                          "fontFamily": "Inter",
+                                          "fontSize": 12,
+                                          "fontWeight": "500"
+                                        },
+                                        {
+                                          "type": "icon",
+                                          "id": "zwz8o",
+                                          "name": "Icon",
+                                          "width": 12,
+                                          "height": 12,
+                                          "icon": "copy",
+                                          "library": "lucide",
+                                          "fill": "#f5f5f5"
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "PmLwK",
+                              "name": "Close",
+                              "width": 24,
+                              "height": 24,
+                              "justifyContent": "center",
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "icon",
+                                  "id": "aElua",
+                                  "name": "X",
+                                  "width": 14,
+                                  "height": 14,
+                                  "icon": "x",
+                                  "library": "lucide",
+                                  "fill": "#a3a3a3"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "rectangle",
+                          "id": "m0w3r",
+                          "layoutPosition": "absolute",
+                          "x": 0,
+                          "y": 0,
+                          "name": "Accent",
+                          "fill": "$color.red-500",
+                          "width": 4,
+                          "height": 800
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "rectangle",
+          "id": "BsQNW",
+          "name": "Divider",
+          "fill": "#262626",
+          "width": "fill_container",
+          "height": 1
+        },
+        {
+          "type": "frame",
+          "id": "P6TdpX",
+          "name": "Stack Behavior",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": 16,
+          "children": [
+            {
+              "type": "text",
+              "id": "W1aOZ",
+              "name": "Section Label",
+              "fill": "#a3a3a3",
+              "content": "STACK BEHAVIOR",
+              "fontFamily": "Inter",
+              "fontSize": 12,
+              "fontWeight": "700",
+              "letterSpacing": 0.6
+            },
+            {
+              "type": "text",
+              "id": "Nm5OY",
+              "name": "Description",
+              "fill": "#d4d4d4",
+              "textGrowth": "fixed-width",
+              "width": "fill_container",
+              "content": "Toasts stack bottom-right with 8px gap. Newest toast appears at the bottom. A \"Dismiss all\" control appears above the stack when 3+ toasts are visible.",
+              "lineHeight": 1.5,
+              "fontFamily": "Inter",
+              "fontSize": 12,
+              "fontWeight": "normal"
+            },
+            {
+              "type": "frame",
+              "id": "tUh7Q",
+              "name": "Viewport Mock",
+              "clip": true,
+              "width": "fill_container",
+              "height": 520,
+              "fill": "#262626",
+              "cornerRadius": 8,
+              "stroke": "#262626",
+              "strokeWidth": 1,
+              "strokeAlignment": "inner",
+              "layout": "none",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "PI8nD",
+                  "layoutPosition": "absolute",
+                  "x": 440,
+                  "y": 188,
+                  "name": "Toast Stack",
+                  "layout": "vertical",
+                  "gap": 8,
+                  "alignItems": "end",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "RPROM",
+                      "name": "Dismiss All",
+                      "fill": "#d4d4d4",
+                      "content": "Dismiss all",
+                      "fontFamily": "Inter",
+                      "fontSize": 13,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "nIhBe",
+                      "name": "Toast / Success",
+                      "clip": true,
+                      "width": 380,
+                      "fill": "#171717",
+                      "cornerRadius": 8,
+                      "stroke": "#262626",
+                      "strokeWidth": 1,
+                      "strokeAlignment": "inner",
+                      "effect": {
+                        "type": "shadow",
+                        "shadowType": "outer",
+                        "color": "#00000033",
+                        "offset": {
+                          "x": 0,
+                          "y": 4
+                        },
+                        "blur": 12
+                      },
+                      "layout": "vertical",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "f6WP2u",
+                          "name": "Content Row",
+                          "width": "fill_container",
+                          "gap": 8,
+                          "padding": [
+                            10,
+                            10,
+                            10,
+                            18
+                          ],
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "b5pqi",
+                              "name": "Icon",
+                              "width": 16,
+                              "height": 16,
+                              "icon": "circle-check",
+                              "library": "lucide",
+                              "fill": "$color.teal-500"
+                            },
+                            {
+                              "type": "text",
+                              "id": "RRMp3",
+                              "name": "Message",
+                              "fill": "#f5f5f5",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "RA profile updated successfully.",
+                              "lineHeight": 1.4,
+                              "fontFamily": "Inter",
+                              "fontSize": 14,
+                              "fontWeight": "normal"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "yeUmO",
+                              "name": "Close",
+                              "width": 22,
+                              "height": 22,
+                              "justifyContent": "center",
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "icon",
+                                  "id": "TxSdE",
+                                  "name": "X",
+                                  "width": 13,
+                                  "height": 13,
+                                  "icon": "x",
+                                  "library": "lucide",
+                                  "fill": "#a3a3a3"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "rectangle",
+                          "id": "ZERWS",
+                          "name": "Progress",
+                          "fill": "$color.teal-500",
+                          "width": "fill_container",
+                          "height": 3
+                        },
+                        {
+                          "type": "rectangle",
+                          "id": "o9DtA",
+                          "layoutPosition": "absolute",
+                          "x": 0,
+                          "y": 0,
+                          "name": "Accent",
+                          "fill": "$color.teal-500",
+                          "width": 4,
+                          "height": 800
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "y62gGz",
+                      "name": "Toast / Info",
+                      "clip": true,
+                      "width": 380,
+                      "fill": "#171717",
+                      "cornerRadius": 8,
+                      "stroke": "#262626",
+                      "strokeWidth": 1,
+                      "strokeAlignment": "inner",
+                      "effect": {
+                        "type": "shadow",
+                        "shadowType": "outer",
+                        "color": "#00000033",
+                        "offset": {
+                          "x": 0,
+                          "y": 4
+                        },
+                        "blur": 12
+                      },
+                      "layout": "vertical",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "ciO5t",
+                          "name": "Content Row",
+                          "width": "fill_container",
+                          "gap": 8,
+                          "padding": [
+                            10,
+                            10,
+                            10,
+                            18
+                          ],
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "IEjn0",
+                              "name": "Icon",
+                              "width": 16,
+                              "height": 16,
+                              "icon": "info",
+                              "library": "lucide",
+                              "fill": "$color.blue-500"
+                            },
+                            {
+                              "type": "text",
+                              "id": "XaxV9",
+                              "name": "Message",
+                              "fill": "#f5f5f5",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "Bulk RA profile update finished. 42 of 44 certificates were processed.",
+                              "lineHeight": 1.4,
+                              "fontFamily": "Inter",
+                              "fontSize": 14,
+                              "fontWeight": "normal"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "vym8c",
+                              "name": "Close",
+                              "width": 22,
+                              "height": 22,
+                              "justifyContent": "center",
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "icon",
+                                  "id": "nzh72",
+                                  "name": "X",
+                                  "width": 13,
+                                  "height": 13,
+                                  "icon": "x",
+                                  "library": "lucide",
+                                  "fill": "#a3a3a3"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "rectangle",
+                          "id": "NuC1C",
+                          "name": "Progress",
+                          "fill": "$color.blue-500",
+                          "width": "fill_container",
+                          "height": 3
+                        },
+                        {
+                          "type": "rectangle",
+                          "id": "i637w",
+                          "layoutPosition": "absolute",
+                          "x": 0,
+                          "y": 0,
+                          "name": "Accent",
+                          "fill": "$color.blue-500",
+                          "width": 4,
+                          "height": 800
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "laWam",
+                      "name": "Toast / Danger",
+                      "clip": true,
+                      "width": 380,
+                      "fill": "#171717",
+                      "cornerRadius": 8,
+                      "stroke": "#262626",
+                      "strokeWidth": 1,
+                      "strokeAlignment": "inner",
+                      "effect": {
+                        "type": "shadow",
+                        "shadowType": "outer",
+                        "color": "#00000033",
+                        "offset": {
+                          "x": 0,
+                          "y": 4
+                        },
+                        "blur": 12
+                      },
+                      "layout": "vertical",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "VD2a2",
+                          "name": "Content Row",
+                          "width": "fill_container",
+                          "gap": 8,
+                          "padding": [
+                            10,
+                            10,
+                            8,
+                            18
+                          ],
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "o17zQ8",
+                              "name": "Icon",
+                              "width": 16,
+                              "height": 16,
+                              "icon": "circle-alert",
+                              "library": "lucide",
+                              "fill": "$color.red-500"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "xK3Ap",
+                              "name": "Text Column",
+                              "width": "fill_container",
+                              "layout": "vertical",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "rhylR",
+                                  "name": "Message",
+                                  "fill": "#f5f5f5",
+                                  "textGrowth": "fixed-width-height",
+                                  "width": "fill_container",
+                                  "height": 78,
+                                  "content": "Failed to synchronize certificates (500): the connector returned an unexpected response while processing the discovery batch. Certificate 0 could not be...",
+                                  "lineHeight": 1.4,
+                                  "fontFamily": "Inter",
+                                  "fontSize": 14,
+                                  "fontWeight": "normal"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "HX1UT",
+                                  "name": "Actions",
+                                  "gap": 4,
+                                  "padding": [
+                                    4,
+                                    0,
+                                    0,
+                                    0
+                                  ],
+                                  "alignItems": "center",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "CGZex",
+                                      "name": "Show More",
+                                      "fill": "#f5f5f5",
+                                      "content": "Show more",
+                                      "fontFamily": "Inter",
+                                      "fontSize": 12,
+                                      "fontWeight": "500"
+                                    },
+                                    {
+                                      "type": "icon",
+                                      "id": "H2H8z",
+                                      "name": "Chevron",
+                                      "width": 12,
+                                      "height": 12,
+                                      "icon": "chevron-down",
+                                      "library": "lucide",
+                                      "fill": "#f5f5f5"
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "o9ZvZA",
+                              "name": "Close",
+                              "width": 22,
+                              "height": 22,
+                              "justifyContent": "center",
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "icon",
+                                  "id": "cMYGc",
+                                  "name": "X",
+                                  "width": 13,
+                                  "height": 13,
+                                  "icon": "x",
+                                  "library": "lucide",
+                                  "fill": "#a3a3a3"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "rectangle",
+                          "id": "k7lsIu",
+                          "layoutPosition": "absolute",
+                          "x": 0,
+                          "y": 0,
+                          "name": "Accent",
+                          "fill": "$color.red-500",
+                          "width": 4,
+                          "height": 800
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "variables": {
+    "color.white": {
+      "type": "color",
+      "value": "#ffffff"
+    },
+    "color.gray-100": {
+      "type": "color",
+      "value": "#f5f5f5"
+    },
+    "color.gray-200": {
+      "type": "color",
+      "value": "#e8e8e8"
+    },
+    "color.gray-500": {
+      "type": "color",
+      "value": "#a8a8a8"
+    },
+    "color.gray-800": {
+      "type": "color",
+      "value": "#666666"
+    },
+    "color.gray-900": {
+      "type": "color",
+      "value": "#404040"
+    },
+    "color.neutral-500": {
+      "type": "color",
+      "value": "#737373"
+    },
+    "color.neutral-700": {
+      "type": "color",
+      "value": "#404040"
+    },
+    "color.neutral-800": {
+      "type": "color",
+      "value": "#262626"
+    },
+    "color.neutral-900": {
+      "type": "color",
+      "value": "#171717"
+    },
+    "color.red-100": {
+      "type": "color",
+      "value": "#fee2e2"
+    },
+    "color.red-200": {
+      "type": "color",
+      "value": "#fecaca"
+    },
+    "color.red-500": {
+      "type": "color",
+      "value": "#ef4444"
+    },
+    "color.red-800": {
+      "type": "color",
+      "value": "#991b1b"
+    },
+    "color.red-800-10": {
+      "type": "color",
+      "value": "#991b1b1a"
+    },
+    "color.red-900": {
+      "type": "color",
+      "value": "#7f1d1d"
+    },
+    "color.teal-100": {
+      "type": "color",
+      "value": "#ccfbf1"
+    },
+    "color.teal-200": {
+      "type": "color",
+      "value": "#99f6e4"
+    },
+    "color.teal-500": {
+      "type": "color",
+      "value": "#14b8a6"
+    },
+    "color.teal-800": {
+      "type": "color",
+      "value": "#115e59"
+    },
+    "color.teal-800-10": {
+      "type": "color",
+      "value": "#115e591a"
+    },
+    "color.teal-900": {
+      "type": "color",
+      "value": "#134e4a"
+    },
+    "color.blue-500": {
+      "type": "color",
+      "value": "#2798e7"
+    },
+    "color.blue-600": {
+      "type": "color",
+      "value": "#1e7bc4"
+    },
+    "color.neutral-200": {
+      "type": "color",
+      "value": "#e5e5e5"
+    },
+    "color.neutral-300": {
+      "type": "color",
+      "value": "#d4d4d4"
+    },
+    "color.neutral-400": {
+      "type": "color",
+      "value": "#a3a3a3"
+    },
+    "color.neutral-600": {
+      "type": "color",
+      "value": "#525252"
+    },
+    "color.gray-600": {
+      "type": "color",
+      "value": "#4b5563"
+    },
+    "color.gray-700": {
+      "type": "color",
+      "value": "#374151"
+    }
+  },
+  "fileToken": "c5b00c5c-79b2-4e78-be37-c3f6e53e384b"
+}

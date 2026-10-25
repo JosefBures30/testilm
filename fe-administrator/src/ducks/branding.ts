@@ -1,0 +1,206 @@
+import { createSelector, createSlice, type PayloadAction } from '@reduxjs/toolkit';
+import type { AppState } from 'ducks';
+import { resetSliceState } from 'ducks/reducerUtils';
+import type { BrandingSettingsModel, BrandingSettingsUpdateModel, PublicBrandingModel } from 'types/branding';
+
+/**
+ * What an instance with no branding configured looks like. Every colour and logo is explicitly `null` because the
+ * anonymous response has a fixed shape; `defaultTheme` is absent rather than null.
+ */
+export const platformDefaultBranding: PublicBrandingModel = {
+    configured: false,
+    primaryColor: null,
+    secondaryColor: null,
+    backgroundColor: null,
+    textColor: null,
+    lightLogo: null,
+    darkLogo: null,
+};
+
+export const toPublicBranding = (stored: BrandingSettingsModel): PublicBrandingModel => {
+    const fields = [
+        stored.primaryColor,
+        stored.secondaryColor,
+        stored.backgroundColor,
+        stored.textColor,
+        stored.lightLogo,
+        stored.darkLogo,
+        stored.defaultTheme,
+    ];
+
+    return {
+        configured: fields.some((field) => field !== undefined && field !== null),
+        primaryColor: stored.primaryColor ?? null,
+        secondaryColor: stored.secondaryColor ?? null,
+        backgroundColor: stored.backgroundColor ?? null,
+        textColor: stored.textColor ?? null,
+        lightLogo: stored.lightLogo ?? null,
+        darkLogo: stored.darkLogo ?? null,
+        defaultTheme: stored.defaultTheme,
+    };
+};
+
+export type State = {
+    /** The operator's stored branding, read through the authenticated settings API for the Appearance tab. */
+    branding?: BrandingSettingsModel;
+
+    /** The subset an unauthenticated caller may read, used by the login page before there is any session. */
+    publicBranding?: PublicBrandingModel;
+
+    /**
+     * Whether the last anonymous read failed. Set because a failure still settles `publicBranding` on the platform
+     * default, which a consumer cannot otherwise tell apart from an instance that genuinely has no branding.
+     */
+    publicBrandingReadFailed: boolean;
+
+    isFetchingBranding: boolean;
+    isFetchingPublicBranding: boolean;
+    isUpdatingBranding: boolean;
+    updateSucceeded: boolean;
+    isResettingBranding: boolean;
+    resetSucceeded: boolean;
+
+    error?: string;
+};
+
+export const initialState: State = {
+    publicBrandingReadFailed: false,
+    isFetchingBranding: false,
+    isFetchingPublicBranding: false,
+    isUpdatingBranding: false,
+    updateSucceeded: false,
+    isResettingBranding: false,
+    resetSucceeded: false,
+};
+
+export const slice = createSlice({
+    name: 'branding',
+
+    initialState,
+
+    reducers: {
+        resetState: (state, action: PayloadAction<void>) => {
+            resetSliceState(state, initialState);
+        },
+
+        getBranding: (state, action: PayloadAction<void>) => {
+            state.isFetchingBranding = true;
+            state.error = undefined;
+        },
+
+        getBrandingSuccess: (state, action: PayloadAction<{ branding: BrandingSettingsModel }>) => {
+            state.branding = action.payload.branding;
+            state.isFetchingBranding = false;
+        },
+
+        /**
+         * The previously read branding goes with the failure. `branding` is what the Appearance tab treats as proof of
+         * a known-good state to edit from, so leaving a cached value behind after a failed re-read would make the form
+         * writable over branding this session no longer knows to be current — and, because a save replaces the whole
+         * brand, the next edit would overwrite newer server state with it.
+         */
+        getBrandingFailure: (state, action: PayloadAction<{ error: string | undefined }>) => {
+            state.branding = undefined;
+            state.isFetchingBranding = false;
+            state.error = action.payload.error;
+        },
+
+        getPublicBranding: (state, action: PayloadAction<void>) => {
+            state.isFetchingPublicBranding = true;
+            state.error = undefined;
+        },
+
+        getPublicBrandingSuccess: (state, action: PayloadAction<{ branding: PublicBrandingModel }>) => {
+            state.publicBranding = action.payload.branding;
+            state.publicBrandingReadFailed = false;
+            state.isFetchingPublicBranding = false;
+        },
+
+        /**
+         * A failed read still settles on the platform default. The login page renders before anyone can be told about
+         * an error, so leaving branding undefined would only mean rendering nothing at all.
+         */
+        getPublicBrandingFailure: (state, action: PayloadAction<{ error: string | undefined }>) => {
+            state.publicBranding = platformDefaultBranding;
+            state.publicBrandingReadFailed = true;
+            state.isFetchingPublicBranding = false;
+            state.error = action.payload.error;
+        },
+
+        updateBranding: (state, action: PayloadAction<{ branding: BrandingSettingsUpdateModel }>) => {
+            state.isUpdatingBranding = true;
+            state.updateSucceeded = false;
+            state.resetSucceeded = false;
+            state.error = undefined;
+        },
+
+        /** Carries the branding read back after the write, not the branding that was sent: Core rewrites SVG logos. */
+        updateBrandingSuccess: (state, action: PayloadAction<{ branding: BrandingSettingsModel }>) => {
+            state.branding = action.payload.branding;
+            state.isUpdatingBranding = false;
+            state.updateSucceeded = true;
+        },
+
+        updateBrandingFailure: (state, action: PayloadAction<{ error: string | undefined }>) => {
+            state.isUpdatingBranding = false;
+            state.updateSucceeded = false;
+            state.error = action.payload.error;
+        },
+
+        /**
+         * Reset to default is an update with nothing in it: Core removes the stored row for every field left unset, so
+         * each one falls back to its platform default independently.
+         */
+        resetBranding: (state, action: PayloadAction<void>) => {
+            state.isResettingBranding = true;
+            state.resetSucceeded = false;
+            state.updateSucceeded = false;
+            state.error = undefined;
+        },
+
+        resetBrandingSuccess: (state, action: PayloadAction<void>) => {
+            state.branding = {};
+            state.isResettingBranding = false;
+            state.resetSucceeded = true;
+        },
+
+        resetBrandingFailure: (state, action: PayloadAction<{ error: string | undefined }>) => {
+            state.isResettingBranding = false;
+            state.resetSucceeded = false;
+            state.error = action.payload.error;
+        },
+    },
+});
+
+const state = (reduxStore: AppState): State => reduxStore?.[slice.name];
+
+const branding = createSelector(state, (state) => state?.branding);
+const publicBranding = createSelector(state, (state) => state?.publicBranding);
+const publicBrandingReadFailed = createSelector(state, (state) => state?.publicBrandingReadFailed ?? false);
+
+const isFetchingBranding = createSelector(state, (state) => state?.isFetchingBranding);
+const isFetchingPublicBranding = createSelector(state, (state) => state?.isFetchingPublicBranding);
+const isUpdatingBranding = createSelector(state, (state) => state?.isUpdatingBranding);
+const updateSucceeded = createSelector(state, (state) => state?.updateSucceeded);
+const isResettingBranding = createSelector(state, (state) => state?.isResettingBranding);
+const resetSucceeded = createSelector(state, (state) => state?.resetSucceeded);
+const error = createSelector(state, (state) => state?.error);
+
+export const selectors = {
+    state,
+    branding,
+    publicBranding,
+    publicBrandingReadFailed,
+
+    isFetchingBranding,
+    isFetchingPublicBranding,
+    isUpdatingBranding,
+    updateSucceeded,
+    isResettingBranding,
+    resetSucceeded,
+    error,
+};
+
+export const actions = slice.actions;
+
+export default slice.reducer;

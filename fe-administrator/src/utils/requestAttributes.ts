@@ -1,0 +1,99 @@
+import type { DataAttributeV3, FieldMapping, MappedField } from 'types/openapi';
+import { FieldType, GeneralNameType } from 'types/openapi';
+import type { AttributeDescriptorModel } from 'types/attributes';
+import { isDataAttributeModel } from 'types/attributes';
+
+type AnyDescriptor = AttributeDescriptorModel | undefined;
+
+// Friendly X.509 SAN names keyed by GeneralNameType. Typing the map by the enum makes a
+// future enum change a compile error here; the raw-value fallback in generalNameLabel keeps
+// forward-compatibility for values not (yet) in the generated enum.
+const GENERAL_NAME_LABELS: Record<GeneralNameType, string> = {
+    [GeneralNameType.Dns]: 'dNSName',
+    [GeneralNameType.Email]: 'rfc822Name',
+    [GeneralNameType.Ip]: 'iPAddress',
+    [GeneralNameType.Uri]: 'uniformResourceIdentifier',
+    [GeneralNameType.DirectoryName]: 'directoryName',
+    [GeneralNameType.RegisteredId]: 'registeredID',
+    [GeneralNameType.OtherName]: 'otherName',
+};
+
+// Group order for tokens; `order` on MappedField is scoped per field type, so we group by
+// type first and only sort by `order` within a group (never across types).
+const FIELD_TYPE_ORDER: FieldType[] = [FieldType.Rdn, FieldType.San, FieldType.Extension, FieldType.KeyUsage, FieldType.ExtendedKeyUsage];
+
+/** Extracts fieldMapping defensively; only DataAttribute (V3) carries it. */
+export function getFieldMapping(descriptor: AnyDescriptor): FieldMapping | undefined {
+    if (!descriptor || !isDataAttributeModel(descriptor)) return undefined;
+    return (descriptor as DataAttributeV3).fieldMapping ?? undefined;
+}
+
+export function generalNameLabel(value: string): string {
+    return GENERAL_NAME_LABELS[value as GeneralNameType] ?? value;
+}
+
+function fieldToken(field: MappedField, rdnCodeByOid: Record<string, string> = {}): string {
+    switch (field?.fieldType) {
+        case FieldType.Rdn: {
+            const rdn = (field as { rdn?: string }).rdn;
+            const code = rdn ? (rdnCodeByOid[rdn] ?? rdn) : undefined;
+            return code ? `Subject ${code}` : 'Subject';
+        }
+        case FieldType.San: {
+            const generalNameType = (field as { generalNameType?: string }).generalNameType;
+            return generalNameType ? `SAN ${generalNameLabel(generalNameType)}` : 'SAN';
+        }
+        case FieldType.Extension: {
+            const extensionOid = (field as { extensionOid?: string }).extensionOid;
+            return extensionOid ? `Extension ${extensionOid}` : 'Extension';
+        }
+        case FieldType.KeyUsage:
+            return 'Key Usage';
+        case FieldType.ExtendedKeyUsage:
+            return 'Extended Key Usage';
+        default:
+            return field?.fieldType ? String(field.fieldType) : '';
+    }
+}
+
+function typeRank(field: MappedField): number {
+    const index = FIELD_TYPE_ORDER.indexOf(field?.fieldType);
+    return index === -1 ? FIELD_TYPE_ORDER.length : index;
+}
+
+/**
+ * Tokens describing where the value lands, e.g. ["Subject CN", "SAN dNSName"]. Fields are
+ * grouped by type (RDN → SAN → Extension) and only sorted by `order` within each group,
+ * because `order` is a per-type index. This is the single source both the badge summary and
+ * its tooltip build on, so their delimiters can never drift apart.
+ */
+export function fieldMappingTokens(fieldMapping: FieldMapping | undefined, rdnCodeByOid: Record<string, string> = {}): string[] {
+    const fields = fieldMapping?.fields;
+    if (!Array.isArray(fields) || fields.length === 0) return [];
+    return [...fields]
+        .sort((a, b) => {
+            const byType = typeRank(a) - typeRank(b);
+            if (byType !== 0) return byType;
+            // Core reads an absent order as 0.
+            return (a?.order ?? 0) - (b?.order ?? 0);
+        })
+        .map((field) => fieldToken(field, rdnCodeByOid))
+        .filter((token) => token.length > 0);
+}
+
+/** Human summary of where the value lands, e.g. "Subject CN + SAN dNSName". */
+export function fieldMappingSummary(fieldMapping: FieldMapping | undefined, rdnCodeByOid: Record<string, string> = {}): string {
+    return fieldMappingTokens(fieldMapping, rdnCodeByOid).join(' + ');
+}
+
+/**
+ * The OIDs of every generic extension this mapping targets. Key Usage / Extended Key Usage are
+ * deliberately not reported: they go through their typed targets and never accept a raw extension
+ * value, JER included.
+ */
+export function getMappedExtensionOids(fieldMapping: FieldMapping | undefined): string[] {
+    return (fieldMapping?.fields ?? [])
+        .filter((f) => f?.fieldType === FieldType.Extension)
+        .map((f) => (f as { extensionOid?: string }).extensionOid)
+        .filter((oid): oid is string => !!oid);
+}

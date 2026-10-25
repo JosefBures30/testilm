@@ -1,0 +1,737 @@
+import AttributeViewer, { ATTRIBUTE_VIEWER_TYPE } from 'components/Attributes/AttributeViewer';
+import CustomTable, { type TableDataRow, type TableHeader } from 'components/CustomTable';
+import Dialog from 'components/Dialog';
+import StatusBadge from 'components/StatusBadge';
+import Widget from 'components/Widget';
+
+import WidgetButtons, { type WidgetButtonProps } from 'components/WidgetButtons';
+
+import { selectors as authSelectors } from 'ducks/auth';
+import { actions, selectors } from 'ducks/cryptographic-keys';
+import { selectors as tokenProfileSelectors } from 'ducks/token-profiles';
+
+import { type ReactElement, useCallback, useEffect, useMemo, useState } from 'react';
+import { useDispatch, useSelector } from 'react-redux';
+import Select from 'components/Select';
+
+import { selectors as enumSelectors, getEnumLabel } from 'ducks/enums';
+import { EnumValueDescription } from 'components/EnumDescription';
+import Badge from 'components/Badge';
+import type { CryptographicKeyHistoryModel, CryptographicKeyItemDetailResponseModel } from 'types/cryptographic-keys';
+import { KeyCompromiseReason, KeyRequestType, KeyState, KeyType, KeyUsage, PlatformEnum, Resource, ResourceAction } from 'types/openapi';
+import { dateFormatter } from 'utils/dateUtil';
+import { hasResourceAction } from 'utils/permissions';
+import KeyStateBadge from '../KeyStateBadge';
+import KeyStatus from '../KeyStatus';
+import KeyUsageSelect, { filterKeyUsagesByType } from 'components/_pages/cryptographic-keys/KeyUsageSelect';
+import SignVerifyData from './SignVerifyData';
+import KeyExportDialog from './KeyExportDialog';
+import { composeValidators, validateAlphaNumericWithSpecialChars, validateRequired } from 'utils/validators';
+import EditableTableCell from 'components/CustomTable/EditableTableCell';
+import { keyWithoutTokenInstanceActionNotes } from './constants';
+import { createWidgetDetailHeaders } from 'utils/widget';
+import Button from 'components/Button';
+import { Info } from 'lucide-react';
+import Container from 'components/Container';
+
+const EXPORTABLE_ITEM_TYPE_TO_KEY_REQUEST_TYPE: Partial<Record<KeyType, KeyRequestType>> = {
+    [KeyType.Private]: KeyRequestType.KeyPair,
+    [KeyType.Secret]: KeyRequestType.Secret,
+};
+
+type Props = Readonly<{
+    keyUuid: string;
+    tokenInstanceUuid?: string;
+    tokenProfileUuid?: string;
+    supportedKeyUsages?: KeyUsage[];
+    keyItem: CryptographicKeyItemDetailResponseModel;
+    totalKeyItems: number;
+}>;
+
+export default function CryptographicKeyItem({
+    keyUuid,
+    tokenInstanceUuid,
+    tokenProfileUuid,
+    supportedKeyUsages,
+    keyItem,
+    totalKeyItems,
+}: Props) {
+    const dispatch = useDispatch();
+
+    const isUpdatingKeyItem = useSelector(selectors.isUpdatingKeyItem);
+    const isExportingKey = useSelector(selectors.isExportingKey);
+    const profile = useSelector(authSelectors.profile);
+
+    const [confirmDelete, setConfirmDelete] = useState<boolean>(false);
+
+    const [confirmCompromise, setConfirmCompromise] = useState<boolean>(false);
+
+    const [confirmDestroy, setConfirmDestroy] = useState<boolean>(false);
+
+    const [signData, setSignData] = useState<boolean>(false);
+
+    const [verifyData, setVerifyData] = useState<boolean>(false);
+
+    const [exportKey, setExportKey] = useState<boolean>(false);
+
+    const tokenProfile = useSelector(tokenProfileSelectors.tokenProfile);
+    const isFetchingTokenProfile = useSelector(tokenProfileSelectors.isFetchingDetail);
+    const tokenProfileFetchSucceeded = useSelector(tokenProfileSelectors.detailFetchSucceeded);
+
+    const history = useSelector(selectors.keyHistory);
+
+    const [keyHistory, setKeyHistory] = useState<CryptographicKeyHistoryModel[]>([]);
+
+    const [currentInfoId, setCurrentInfoId] = useState('');
+
+    const [compromiseReason, setCompromiseReason] = useState<KeyCompromiseReason>();
+
+    const [keyUsageUpdate, setKeyUsageUpdate] = useState<boolean>(false);
+
+    const [keyUsages, setKeyUsages] = useState<KeyUsage[]>([]);
+    const allowedKeyUsages = useMemo(
+        () => filterKeyUsagesByType(supportedKeyUsages ?? [], keyItem.type),
+        [supportedKeyUsages, keyItem.type],
+    );
+    const selectedKeyUsages = keyUsages.filter((usage) => allowedKeyUsages.includes(usage));
+
+    const [displayKeyData, setDisplayKeyData] = useState<boolean>(false);
+    const keyUsageEnum = useSelector(enumSelectors.platformEnum(PlatformEnum.KeyUsage));
+    const keyTypeEnum = useSelector(enumSelectors.platformEnum(PlatformEnum.KeyType));
+    const keyCompromiseReasonEnum = useSelector(enumSelectors.platformEnum(PlatformEnum.KeyCompromiseReason));
+
+    const getFreshHistory = useCallback(() => {
+        if (!keyItem) return;
+        dispatch(actions.getHistory({ keyItemUuid: keyItem.uuid, keyUuid: keyUuid }));
+    }, [dispatch, keyUuid, keyItem]);
+
+    useEffect(() => {
+        getFreshHistory();
+    }, [getFreshHistory, keyUuid]);
+
+    useEffect(() => {
+        if (history) {
+            setKeyHistory(history.find((item) => item.uuid === keyItem.uuid)?.history || []);
+        }
+    }, [history, keyItem.uuid]);
+
+    useEffect(() => {
+        if (keyUsageUpdate) {
+            setKeyUsages((keyItem.usage ?? []).filter((usage) => allowedKeyUsages.includes(usage)));
+        }
+    }, [keyUsageUpdate, keyItem.usage, allowedKeyUsages]);
+
+    const onEnableClick = useCallback(() => {
+        if (!keyItem) return;
+        dispatch(
+            actions.enableCryptographicKey({
+                keyItemUuid: [keyItem.uuid],
+                uuid: keyUuid,
+            }),
+        );
+    }, [dispatch, keyItem, keyUuid]);
+
+    const onDisableClick = useCallback(() => {
+        if (!keyItem) return;
+        dispatch(
+            actions.disableCryptographicKey({
+                keyItemUuid: [keyItem.uuid],
+                uuid: keyUuid,
+            }),
+        );
+    }, [dispatch, keyItem, keyUuid]);
+
+    const onUpdateKeyUsageConfirmed = useCallback(() => {
+        if (!keyItem || !supportedKeyUsages) return;
+        dispatch(
+            actions.updateKeyUsage({
+                uuid: keyUuid,
+                usage: { usage: keyUsages.filter((usage) => allowedKeyUsages.includes(usage)), uuids: [keyItem.uuid] },
+            }),
+        );
+        setKeyUsageUpdate(false);
+    }, [dispatch, keyUsages, keyItem, keyUuid, supportedKeyUsages, allowedKeyUsages]);
+
+    const onDeleteConfirmed = useCallback(() => {
+        if (!keyItem) return;
+        dispatch(
+            actions.deleteCryptographicKey({
+                keyItemUuid: [keyItem.uuid],
+                uuid: keyUuid,
+                redirect: totalKeyItems === 1 ? '/keys' : undefined,
+            }),
+        );
+        setConfirmDelete(false);
+    }, [dispatch, keyItem, keyUuid, totalKeyItems]);
+
+    const onCompromise = useCallback(() => {
+        if (!keyItem) return;
+        if (!compromiseReason) return;
+        dispatch(
+            actions.compromiseCryptographicKey({
+                request: {
+                    uuids: [keyItem.uuid],
+                    reason: compromiseReason,
+                },
+                uuid: keyUuid,
+            }),
+        );
+        setConfirmCompromise(false);
+    }, [dispatch, keyItem, keyUuid, compromiseReason]);
+
+    const onDestroy = useCallback(() => {
+        dispatch(
+            actions.destroyCryptographicKey({
+                keyItemUuid: [keyItem.uuid],
+                uuid: keyUuid,
+            }),
+        );
+        setConfirmDestroy(false);
+    }, [dispatch, keyItem, keyUuid]);
+
+    const onEditName = useCallback(
+        (newKeyItemName: string) => {
+            if (!keyItem) return;
+            if (keyItem.name === newKeyItemName) return;
+            dispatch(
+                actions.updateCryptographicKeyItem({
+                    uuid: keyUuid,
+                    keyItemUuid: keyItem.uuid,
+                    cryptographicKeyItemEditRequest: {
+                        name: newKeyItemName,
+                    },
+                }),
+            );
+        },
+        [dispatch, keyItem, keyUuid],
+    );
+
+    const exportableKeyTypes = useMemo(() => {
+        if (
+            !tokenProfileUuid ||
+            !tokenInstanceUuid ||
+            isFetchingTokenProfile ||
+            !tokenProfileFetchSucceeded ||
+            tokenProfile?.uuid !== tokenProfileUuid ||
+            tokenProfile.tokenInstanceUuid !== tokenInstanceUuid
+        ) {
+            return undefined;
+        }
+        return tokenProfile.keyTransfer?.exportableKeyTypes;
+    }, [tokenProfile, isFetchingTokenProfile, tokenProfileFetchSucceeded, tokenProfileUuid, tokenInstanceUuid]);
+
+    const exportKeyRequestType = EXPORTABLE_ITEM_TYPE_TO_KEY_REQUEST_TYPE[keyItem.type];
+
+    const canExportKeyItem =
+        hasResourceAction(profile, Resource.Keys, ResourceAction.ExportKey) &&
+        !!exportKeyRequestType &&
+        keyItem.exportable &&
+        keyItem.state === KeyState.Active &&
+        keyItem.enabled &&
+        !!exportableKeyTypes?.[exportKeyRequestType]?.includes(keyItem.keyAlgorithm);
+
+    const buttons: WidgetButtonProps[] = useMemo(() => {
+        const list: WidgetButtonProps[] = [
+            {
+                id: 'delete',
+                icon: 'trash',
+                disabled: false,
+                tooltip: 'Delete',
+                onClick: () => {
+                    setConfirmDelete(true);
+                },
+            },
+            {
+                id: 'enable',
+                icon: 'check',
+                disabled: keyItem.enabled,
+                tooltip: 'Enable',
+                onClick: () => {
+                    onEnableClick();
+                },
+            },
+            {
+                id: 'disable',
+                icon: 'times',
+                disabled: !keyItem.enabled,
+                tooltip: 'Disable',
+                onClick: () => {
+                    onDisableClick();
+                },
+            },
+            {
+                id: 'key',
+                icon: 'key',
+                disabled: !supportedKeyUsages,
+                tooltip: 'Update Key Usage',
+                onClick: () => {
+                    setKeyUsageUpdate(true);
+                },
+            },
+            {
+                id: 'compromise',
+                icon: 'compromise',
+                disabled: ![KeyState.PreActive, KeyState.Active, KeyState.Deactivated].includes(keyItem.state),
+                tooltip: 'Compromise',
+                onClick: () => {
+                    setConfirmCompromise(true);
+                },
+            },
+            {
+                id: 'destroy',
+                icon: 'destroy',
+                disabled: ![KeyState.PreActive, KeyState.Compromised, KeyState.Deactivated].includes(keyItem.state),
+                tooltip: 'Destroy',
+                onClick: () => {
+                    setConfirmDestroy(true);
+                },
+            },
+            {
+                id: 'sign',
+                icon: 'sign',
+                disabled:
+                    keyItem.state !== KeyState.Active || !keyItem.enabled || !keyItem.usage?.includes(KeyUsage.Sign) || !tokenInstanceUuid,
+                tooltip: 'Sign',
+                onClick: () => {
+                    setSignData(true);
+                },
+            },
+            {
+                id: 'verify',
+                icon: 'verify',
+                disabled:
+                    keyItem.state !== KeyState.Active ||
+                    !keyItem.enabled ||
+                    !keyItem.usage?.includes(KeyUsage.Verify) ||
+                    !tokenInstanceUuid,
+                tooltip: 'Verify',
+                onClick: () => {
+                    setVerifyData(true);
+                },
+            },
+        ];
+
+        if (canExportKeyItem) {
+            list.push({
+                id: 'export',
+                icon: 'download',
+                disabled: false,
+                tooltip: 'Export',
+                onClick: () => {
+                    setExportKey(true);
+                },
+            });
+        }
+
+        return list;
+    }, [
+        onDisableClick,
+        onEnableClick,
+        setConfirmCompromise,
+        setConfirmDestroy,
+        keyItem.enabled,
+        keyItem.state,
+        keyItem.usage,
+        tokenInstanceUuid,
+        supportedKeyUsages,
+        canExportKeyItem,
+    ]);
+
+    const detailHeaders: TableHeader[] = useMemo(() => createWidgetDetailHeaders(), []);
+
+    const detailData: TableDataRow[] = useMemo(
+        () =>
+            keyItem
+                ? [
+                      {
+                          id: 'uuid',
+                          columns: ['UUID', keyItem.uuid],
+                      },
+                      {
+                          id: 'name',
+                          columns: [
+                              'Name',
+                              <EditableTableCell
+                                  key="name"
+                                  value={keyItem.name}
+                                  onSave={(newKeyItemName) => onEditName(newKeyItemName)}
+                                  busy={isUpdatingKeyItem}
+                                  formProps={{
+                                      validate: composeValidators(validateRequired(), validateAlphaNumericWithSpecialChars()),
+                                  }}
+                              />,
+                          ],
+                      },
+                      {
+                          id: 'Type',
+                          columns: [
+                              'Type',
+                              <span key="type" className="inline-flex items-center gap-1">
+                                  {getEnumLabel(keyTypeEnum, keyItem.type)}
+                                  <EnumValueDescription platformEnum={PlatformEnum.KeyType} value={keyItem.type} />
+                              </span>,
+                          ],
+                      },
+                      {
+                          id: 'keyAlgorithm',
+                          columns: [
+                              'Key Algorithm',
+                              <span key="keyAlgorithm" className="inline-flex items-center gap-1">
+                                  {keyItem.keyAlgorithm}
+                                  <EnumValueDescription platformEnum={PlatformEnum.KeyAlgorithm} value={keyItem.keyAlgorithm} />
+                              </span>,
+                          ],
+                      },
+                      {
+                          id: 'format',
+                          columns: [
+                              'Key Format',
+                              <div key="format-actions" className="flex items-center gap-2">
+                                  <span className="inline-flex items-center gap-1">
+                                      {keyItem.format}
+                                      <EnumValueDescription platformEnum={PlatformEnum.KeyFormat} value={keyItem.format} />
+                                  </span>
+                                  <Button
+                                      variant="transparent"
+                                      onClick={() => setDisplayKeyData(true)}
+                                      title="Show Key Data"
+                                      className="!px-2 !py-0 text-sm text-brand"
+                                  >
+                                      Key data
+                                  </Button>
+                              </div>,
+                          ],
+                      },
+                      {
+                          id: 'Usages',
+                          columns: [
+                              'Key Usages',
+                              <Container key="usages" className="flex-row" gap={1}>
+                                  {keyItem.usage?.map((usage) => (
+                                      <span key={usage} className="inline-flex items-center gap-1">
+                                          <Badge color="secondary">{usage}</Badge>
+                                          <EnumValueDescription platformEnum={PlatformEnum.KeyUsage} value={usage} />
+                                      </span>
+                                  )) ?? 'None'}
+                              </Container>,
+                          ],
+                      },
+                      {
+                          id: 'enabled',
+                          columns: ['Enabled', <StatusBadge key="enabled" enabled={keyItem.enabled} />],
+                      },
+                      // Only private and secret keys are exported, so a public key item has no Exportable row.
+                      ...(EXPORTABLE_ITEM_TYPE_TO_KEY_REQUEST_TYPE[keyItem.type]
+                          ? [
+                                {
+                                    id: 'exportable',
+                                    columns: ['Exportable', <StatusBadge key="exportable" enabled={keyItem.exportable} />],
+                                },
+                            ]
+                          : []),
+                      {
+                          id: 'state',
+                          columns: [
+                              'State',
+                              keyItem.reason ? (
+                                  <>
+                                      <KeyStateBadge state={keyItem.state} />
+                                      &nbsp;{getEnumLabel(keyCompromiseReasonEnum, keyItem.reason)}
+                                  </>
+                              ) : (
+                                  <KeyStateBadge state={keyItem.state} />
+                              ),
+                          ],
+                      },
+                  ]
+                : [],
+        [keyItem, keyTypeEnum, isUpdatingKeyItem, onEditName, keyCompromiseReasonEnum],
+    );
+
+    const historyHeaders: TableHeader[] = useMemo(
+        () => [
+            {
+                id: 'time',
+                content: 'Time',
+            },
+            {
+                id: 'user',
+                content: 'User',
+            },
+            {
+                id: 'event',
+                content: 'Event',
+            },
+            {
+                id: 'status',
+                content: 'Status',
+            },
+            {
+                id: 'message',
+                content: 'Message',
+            },
+            {
+                id: 'additionalMessage',
+                content: 'Additional Message',
+            },
+        ],
+        [],
+    );
+
+    const optionForCompromise = () => {
+        const options = [];
+        for (const reason in KeyCompromiseReason) {
+            const myReason: KeyCompromiseReason = KeyCompromiseReason[reason as keyof typeof KeyCompromiseReason];
+            options.push({ value: myReason, label: getEnumLabel(keyCompromiseReasonEnum, myReason) });
+        }
+        return options;
+    };
+
+    const historyEntry: TableDataRow[] = useMemo(
+        () =>
+            keyHistory
+                ? keyHistory.map((history) => ({
+                      id: history.uuid,
+                      columns: [
+                          <span key="created" style={{ whiteSpace: 'nowrap' }}>
+                              {dateFormatter(history.created)}
+                          </span>,
+
+                          history.createdBy,
+
+                          history.event,
+
+                          <KeyStatus key="status" status={history.status} />,
+
+                          <div key="message" style={{ wordBreak: 'break-all' }}>
+                              {history.message}
+                          </div>,
+
+                          history.additionalInformation ? (
+                              <Button
+                                  key="info"
+                                  variant="transparent"
+                                  onClick={() => setCurrentInfoId(history.uuid)}
+                                  title="Show Additional Information"
+                              >
+                                  <Info size={16} />
+                              </Button>
+                          ) : (
+                              ''
+                          ),
+                      ],
+                  }))
+                : [],
+        [keyHistory],
+    );
+
+    const additionalInfoEntry = (): ReactElement[] | undefined => {
+        const returnList: ReactElement[] = [];
+
+        if (!currentInfoId) return;
+
+        const currentHistory = keyHistory?.filter((history) => history.uuid === currentInfoId);
+
+        for (const [key, value] of Object.entries(currentHistory?.[0]?.additionalInformation ?? {})) {
+            returnList.push(
+                <tr>
+                    <td style={{ padding: '0.25em' }}>{key}</td>
+                    <td style={{ padding: '0.25em' }}>
+                        <p
+                            style={{
+                                whiteSpace: 'pre-wrap',
+                                wordBreak: 'break-all',
+                            }}
+                        >
+                            {JSON.stringify(value)}
+                        </p>
+                    </td>
+                </tr>,
+            );
+        }
+
+        return returnList;
+    };
+
+    return (
+        <div className="key-details">
+            <div>
+                <h6 className="inline-block">
+                    <Badge key={keyItem.uuid} color="gray">
+                        {keyItem.keyAlgorithm}
+                    </Badge>
+                </h6>
+                <div className="flex justify-end">
+                    <WidgetButtons buttons={buttons} />
+                </div>
+            </div>
+            <CustomTable headers={detailHeaders} data={detailData} />
+
+            {keyItem.metadata && keyItem.metadata.length > 0 && (
+                <Widget title="Metadata" className="mt-3" titleSize="large">
+                    <AttributeViewer viewerType={ATTRIBUTE_VIEWER_TYPE.METADATA} metadata={keyItem.metadata} />
+                </Widget>
+            )}
+            <Widget title="Event History" className="mt-3" titleSize="large" refreshAction={getFreshHistory}>
+                <CustomTable headers={historyHeaders} data={historyEntry} hasPagination={true} />
+            </Widget>
+            <Dialog
+                isOpen={confirmDelete}
+                caption="Delete Key"
+                body={
+                    <div>
+                        <p>You are about to delete Key. Is this what you want to do?</p>
+                        {!tokenInstanceUuid && <p>{keyWithoutTokenInstanceActionNotes.delete}</p>}
+                    </div>
+                }
+                size="lg"
+                toggle={() => setConfirmDelete(false)}
+                icon="delete"
+                buttons={[
+                    { color: 'secondary', variant: 'outline', onClick: () => setConfirmDelete(false), body: 'Cancel' },
+                    { color: 'danger', onClick: onDeleteConfirmed, body: 'Delete' },
+                ]}
+            />
+
+            <Dialog
+                isOpen={confirmCompromise}
+                caption={`Compromised Key`}
+                body={
+                    <div>
+                        <p className="text-center">You are about to mark the Key as compromised. Is this what you want to do?</p>
+                        <p className="mt-2 mb-4 text-center">
+                            <b>Warning:</b> This action cannot be undone.
+                        </p>
+                        <Select
+                            id="compromiseReason"
+                            options={optionForCompromise()}
+                            value={compromiseReason || ''}
+                            onChange={(value) => setCompromiseReason(value as KeyCompromiseReason)}
+                        />
+                    </div>
+                }
+                toggle={() => setConfirmCompromise(false)}
+                buttons={[
+                    { color: 'secondary', variant: 'outline', onClick: () => setConfirmCompromise(false), body: 'Cancel' },
+                    { color: 'danger', onClick: onCompromise, body: 'Yes' },
+                ]}
+            />
+
+            <Dialog
+                isOpen={confirmDestroy}
+                caption={`Destroy Key`}
+                body={
+                    <div>
+                        <p>You are about to destroy the Key. Is this what you want to do?</p>
+                        {!tokenInstanceUuid && <p>{keyWithoutTokenInstanceActionNotes.destroy}</p>}
+                        <p>
+                            <b>Warning:</b> This action cannot be undone.
+                        </p>
+                    </div>
+                }
+                toggle={() => setConfirmDestroy(false)}
+                icon="destroy"
+                buttons={[
+                    { color: 'secondary', variant: 'outline', onClick: () => setConfirmDestroy(false), body: 'Cancel' },
+                    { color: 'danger', onClick: onDestroy, body: 'Destroy' },
+                ]}
+            />
+
+            <Dialog
+                isOpen={signData}
+                caption="Sign Data"
+                body={
+                    <SignVerifyData
+                        action="sign"
+                        visible={signData}
+                        onClose={() => setSignData(false)}
+                        tokenUuid={tokenInstanceUuid}
+                        keyUuid={keyUuid}
+                        keyItemUuid={keyItem.uuid}
+                        tokenProfileUuid={tokenProfileUuid}
+                    />
+                }
+                size="xl"
+                toggle={() => setSignData(false)}
+                buttons={[]}
+            />
+
+            <Dialog
+                isOpen={verifyData}
+                caption="Verify Signature"
+                body={
+                    <SignVerifyData
+                        action="verify"
+                        visible={verifyData}
+                        onClose={() => setVerifyData(false)}
+                        tokenUuid={tokenInstanceUuid}
+                        keyUuid={keyUuid}
+                        keyItemUuid={keyItem.uuid}
+                        tokenProfileUuid={tokenProfileUuid}
+                    />
+                }
+                size="xl"
+                toggle={() => setVerifyData(false)}
+                buttons={[]}
+            />
+
+            <Dialog
+                isOpen={exportKey}
+                caption="Export key material"
+                body={
+                    <KeyExportDialog
+                        keyUuid={keyUuid}
+                        keyItem={keyItem}
+                        providerName={tokenProfile?.tokenInstanceName}
+                        onClose={() => setExportKey(false)}
+                    />
+                }
+                size="md"
+                toggle={() => {
+                    // An export in flight is seen through, so the dialog is not closed under it.
+                    if (!isExportingKey) setExportKey(false);
+                }}
+                buttons={[]}
+            />
+
+            <Dialog
+                isOpen={currentInfoId !== ''}
+                caption={`Additional Information`}
+                body={additionalInfoEntry()}
+                toggle={() => setCurrentInfoId('')}
+                buttons={[]}
+                size="lg"
+            />
+
+            <Dialog
+                isOpen={displayKeyData}
+                caption={`Key Data`}
+                body={<div style={{ lineBreak: 'anywhere' }}>{keyItem.keyData}</div>}
+                toggle={() => setDisplayKeyData(false)}
+                buttons={[{ color: 'secondary', variant: 'outline', onClick: () => setDisplayKeyData(false), body: 'Close' }]}
+                size="lg"
+            />
+
+            <Dialog
+                isOpen={keyUsageUpdate}
+                caption="Update Key Usage"
+                body={
+                    <KeyUsageSelect
+                        value={selectedKeyUsages}
+                        onChange={setKeyUsages}
+                        keyUsageEnum={keyUsageEnum}
+                        keyType={keyItem.type}
+                        supportedKeyUsages={supportedKeyUsages ?? []}
+                        isDisabled={!supportedKeyUsages}
+                    />
+                }
+                toggle={() => setKeyUsageUpdate(false)}
+                size="md"
+                buttons={[
+                    { color: 'secondary', variant: 'outline', onClick: () => setKeyUsageUpdate(false), body: 'Cancel' },
+                    { color: 'primary', onClick: onUpdateKeyUsageConfirmed, body: 'Update', disabled: !supportedKeyUsages },
+                ]}
+            />
+        </div>
+    );
+}

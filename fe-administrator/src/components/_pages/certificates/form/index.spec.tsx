@@ -1,0 +1,905 @@
+import { test, expect, type Page } from '../../../../../playwright/ct-test';
+import { failFileRead, holdFileReads } from '../../../../../playwright/fileReads';
+import { testInitialState } from 'ducks/test-reducers';
+import type { AttributeDescriptorModel } from 'types/attributes';
+import { AttributeContentType, AttributeType } from 'types/openapi';
+import {
+    csrAttributesState,
+    type DispatchedAction,
+    existingKeyState,
+    fillCommonNameAndClearSan,
+    onlyCommonNameSubmitted,
+    selectExistingKey,
+    submittedCsrAttributes,
+} from '../../test-utils/blankRequestAttribute';
+import { CertificateFormTestWrapper } from './CertificateFormTestWrapper';
+
+const csrDataDescriptor: AttributeDescriptorModel = {
+    type: AttributeType.Data,
+    name: 'dataField',
+    uuid: 'csr-data-uuid-1',
+    contentType: AttributeContentType.String,
+    properties: { label: 'Data Field', required: false, readOnly: false, visible: true, list: false, multiSelect: false },
+} as AttributeDescriptorModel;
+
+// A selectable RA Profile: raProfileOptions filters to enabled profiles that carry an authorityInstanceUuid.
+const selectableRaProfile = {
+    uuid: 'ra-1',
+    name: 'RA One',
+    authorityInstanceUuid: 'auth-1',
+    enabled: true,
+} as any;
+
+const ownerUser = {
+    uuid: 'user-1',
+    username: 'jdoe',
+    firstName: 'Jane',
+    lastName: 'Doe',
+    enabled: true,
+} as any;
+
+const certificateGroup = {
+    uuid: 'group-1',
+    name: 'Group One',
+} as any;
+
+const customAttrDescriptor: AttributeDescriptorModel = {
+    type: AttributeType.Custom,
+    name: 'customField',
+    uuid: 'custom-uuid-1',
+    contentType: AttributeContentType.String,
+    // required so the editor renders an editable input directly (optional custom attrs hide behind an add-control).
+    properties: { label: 'Custom Field', required: true, readOnly: false, visible: true, list: false, multiSelect: false },
+} as AttributeDescriptorModel;
+
+async function fillRegisterBasics(page: import('@playwright/test').Page) {
+    await page.getByTestId('requestType-register').click();
+    await page.getByTestId('select-raProfile-trigger').click();
+    await page.getByRole('option', { name: 'RA One' }).click();
+    await page.getByTestId('authorizationSecret').fill('challenge-secret');
+}
+
+test.describe('CertificateForm', () => {
+    test('request mode radio is labelled "Request now"', async ({ mount, page }) => {
+        await mount(<CertificateFormTestWrapper />);
+
+        await expect(page.getByTestId('requestType-issue')).toHaveText('Request now');
+    });
+
+    test('defaults to Request mode: key-source select visible, challenge input absent', async ({ mount, page }) => {
+        await mount(<CertificateFormTestWrapper />);
+
+        await expect(page.getByTestId('keySource')).toBeVisible();
+        await expect(page.getByTestId('authorizationSecret')).toHaveCount(0);
+    });
+
+    test('switching to Pre-register hides key-source select and shows the challenge input', async ({ mount, page }) => {
+        await mount(<CertificateFormTestWrapper />);
+
+        await page.getByTestId('requestType-register').click();
+
+        await expect(page.getByTestId('keySource')).toHaveCount(0);
+        await expect(page.getByTestId('authorizationSecret')).toBeVisible();
+    });
+
+    test('Challenge input is masked (write-only) and optional in Pre-register mode', async ({ mount, page }) => {
+        await mount(<CertificateFormTestWrapper />);
+
+        await page.getByTestId('requestType-register').click();
+
+        const challengeInput = page.getByTestId('authorizationSecret');
+        await expect(challengeInput).toHaveAttribute('type', 'password');
+
+        // Core treats authorizationSecret as optional — omitting it creates an unchallenged pre-registration.
+        await expect(page.getByTestId('label-authorizationSecret')).toContainText('Challenge (optional)');
+        await expect(page.getByTestId('label-authorizationSecret').locator('.text-danger')).toHaveCount(0);
+    });
+
+    test('switching back to Request mode restores the key-source select and hides the challenge input', async ({ mount, page }) => {
+        await mount(<CertificateFormTestWrapper />);
+
+        await page.getByTestId('requestType-register').click();
+        await expect(page.getByTestId('authorizationSecret')).toBeVisible();
+
+        await page.getByTestId('requestType-issue').click();
+
+        await expect(page.getByTestId('keySource')).toBeVisible();
+        await expect(page.getByTestId('authorizationSecret')).toHaveCount(0);
+    });
+
+    test('Request mode shows both the Connector Attributes and Custom Attributes tabs', async ({ mount, page }) => {
+        await mount(<CertificateFormTestWrapper />);
+
+        await expect(page.getByRole('tab', { name: 'Connector Attributes' })).toBeVisible();
+        await expect(page.getByRole('tab', { name: 'Custom Attributes' })).toBeVisible();
+    });
+
+    test('Pre-register mode always shows the Connector Attributes tab, matching Issue mode, even with no register attributes', async ({
+        mount,
+        page,
+    }) => {
+        await mount(<CertificateFormTestWrapper />);
+
+        await page.getByTestId('requestType-register').click();
+
+        await expect(page.getByRole('tab', { name: 'Connector Attributes' })).toBeVisible();
+        await expect(page.getByRole('tab', { name: 'Custom Attributes' })).toBeVisible();
+
+        // No RA Profile selected yet: the tab shows the select-a-profile hint.
+        await page.getByRole('tab', { name: 'Connector Attributes' }).click();
+        await expect(page.getByTestId('register_attributes-hint')).toBeVisible();
+    });
+
+    test('Pre-register Connector Attributes tab shows an empty-state message when the selected RA profile has no register attributes', async ({
+        mount,
+        page,
+    }) => {
+        await mount(
+            <CertificateFormTestWrapper
+                preloadedState={{
+                    raprofiles: { ...testInitialState.raprofiles, raProfiles: [selectableRaProfile] },
+                }}
+            />,
+        );
+
+        await page.getByTestId('requestType-register').click();
+        await page.getByTestId('select-raProfile-trigger').click();
+        await page.getByRole('option', { name: 'RA One' }).click();
+
+        await page.getByRole('tab', { name: 'Connector Attributes' }).click();
+        await expect(page.getByTestId('register_attributes-empty')).toBeVisible();
+    });
+
+    test('Pre-register mode shows the Connector Attributes tab when the RA profile has register attributes', async ({ mount, page }) => {
+        const registerDescriptor: AttributeDescriptorModel = {
+            type: AttributeType.Data,
+            name: 'regField',
+            uuid: 'register-data-uuid-1',
+            contentType: AttributeContentType.String,
+            properties: { label: 'Register Field', required: false, readOnly: false, visible: true, list: false, multiSelect: false },
+        } as AttributeDescriptorModel;
+
+        await mount(
+            <CertificateFormTestWrapper
+                preloadedState={{
+                    raprofiles: { ...testInitialState.raprofiles, raProfiles: [selectableRaProfile] },
+                    certificates: { ...testInitialState.certificates, registerAttributes: { 'ra-1': [registerDescriptor] } },
+                }}
+            />,
+        );
+
+        await page.getByTestId('requestType-register').click();
+        await page.getByTestId('select-raProfile-trigger').click();
+        await page.getByRole('option', { name: 'RA One' }).click();
+
+        await expect(page.getByRole('tab', { name: 'Connector Attributes' })).toBeVisible();
+    });
+
+    test('an in-flight registration disables Cancel and puts Create in its progress state (no duplicate submit)', async ({
+        mount,
+        page,
+    }) => {
+        // Register and issue are separate non-idempotent flows; while either is in flight the form must
+        // disable its controls. Here the register flag is set, which the issue flag alone would have missed.
+        await mount(
+            <CertificateFormTestWrapper
+                preloadedState={{
+                    certificates: { ...testInitialState.certificates, isRegistering: true },
+                }}
+            />,
+        );
+
+        await expect(page.getByRole('button', { name: 'Cancel' })).toBeDisabled();
+        const createButton = page.getByRole('button', { name: 'Creating' });
+        await expect(createButton).toBeVisible();
+        await expect(createButton).toBeDisabled();
+    });
+
+    test('Request Attributes tab shows the hint (no fields) when no RA Profile is selected', async ({ mount, page }) => {
+        await mount(<CertificateFormTestWrapper />);
+
+        await page.getByTestId('requestType-register').click();
+
+        await expect(page.getByRole('tab', { name: 'Request Attributes' })).toBeVisible();
+        const hint = page.getByTestId('csrAttributes-hint');
+        await expect(hint).toBeVisible();
+        await expect(hint).toContainText('Select an RA Profile to see its request attributes.');
+        await expect(page.getByTestId('text-input-__attributes__csrAttributes__.dataField')).toHaveCount(0);
+    });
+
+    test('Request Attributes tab renders the resolved descriptors as fields (hint gone) when present', async ({ mount, page }) => {
+        await mount(
+            <CertificateFormTestWrapper
+                preloadedState={{
+                    certificates: { ...testInitialState.certificates, csrAttributeDescriptors: [csrDataDescriptor] },
+                }}
+            />,
+        );
+
+        await page.getByTestId('requestType-register').click();
+
+        await expect(page.getByTestId('text-input-__attributes__csrAttributes__.dataField')).toBeVisible({ timeout: 15000 });
+        await expect(page.getByTestId('csrAttributes-hint')).toHaveCount(0);
+    });
+
+    test('Request Attributes tab shows a loading affordance (not the select-a-profile hint) while descriptors are being fetched', async ({
+        mount,
+        page,
+    }) => {
+        await mount(
+            <CertificateFormTestWrapper
+                preloadedState={{
+                    certificates: { ...testInitialState.certificates, isFetchingCsrAttributes: true },
+                }}
+            />,
+        );
+
+        await page.getByTestId('requestType-register').click();
+
+        // While the per-profile fetch is in flight the misleading "Select an RA Profile" hint must not show.
+        await expect(page.getByTestId('csrAttributes-loading')).toBeVisible();
+        await expect(page.getByTestId('csrAttributes-hint')).toHaveCount(0);
+        await expect(page.getByTestId('text-input-__attributes__csrAttributes__.dataField')).toHaveCount(0);
+    });
+
+    test('selecting an RA Profile that resolves to no attributes shows the empty message, not the select-a-profile hint', async ({
+        mount,
+        page,
+    }) => {
+        await mount(
+            <CertificateFormTestWrapper
+                preloadedState={{
+                    raprofiles: { ...testInitialState.raprofiles, raProfiles: [selectableRaProfile] },
+                }}
+            />,
+        );
+
+        await page.getByTestId('requestType-register').click();
+
+        // Before selection: the hint prompting for a profile.
+        await expect(page.getByTestId('csrAttributes-hint')).toBeVisible();
+
+        // Select the RA Profile — drives onRaProfileChange and the RHF-watched selection.
+        await page.getByTestId('select-raProfile-trigger').click();
+        await page.getByRole('option', { name: 'RA One' }).click();
+
+        // A profile is now selected but resolves to zero attributes: the message must distinguish this
+        // from "no profile selected" rather than keep telling the user to pick a profile.
+        await expect(page.getByTestId('csrAttributes-empty')).toBeVisible();
+        await expect(page.getByTestId('csrAttributes-empty')).toContainText('This RA Profile has no request attributes.');
+        await expect(page.getByTestId('csrAttributes-hint')).toHaveCount(0);
+    });
+
+    test('Pre-register mode groups fields into Request Attributes / Custom Attributes / Ownership tabs, Challenge stays inline', async ({
+        mount,
+        page,
+    }) => {
+        await mount(<CertificateFormTestWrapper />);
+
+        await page.getByTestId('requestType-register').click();
+
+        await expect(page.getByRole('tab', { name: 'Request Attributes' })).toBeVisible();
+        await expect(page.getByRole('tab', { name: 'Custom Attributes' })).toBeVisible();
+        await expect(page.getByRole('tab', { name: 'Ownership' })).toBeVisible();
+
+        // The Challenge is inline (not hidden behind a tab), visible without any tab click.
+        await expect(page.getByTestId('authorizationSecret')).toBeVisible();
+    });
+
+    test('Pre-register Ownership tab shows optional Owner and Groups fields', async ({ mount, page }) => {
+        await mount(<CertificateFormTestWrapper />);
+
+        await page.getByTestId('requestType-register').click();
+        await page.getByRole('tab', { name: 'Ownership' }).click();
+
+        await expect(page.getByTestId('select-registerOwner-trigger')).toBeVisible();
+        await expect(page.getByTestId('select-registerGroups-trigger')).toBeVisible();
+
+        // Both are optional: no required (red-star) indicator on their labels.
+        await expect(page.getByTestId('label-registerOwner').locator('.text-danger')).toHaveCount(0);
+        await expect(page.getByTestId('label-registerGroups').locator('.text-danger')).toHaveCount(0);
+    });
+
+    test('Issue now mode does not show the Owner or Groups fields', async ({ mount, page }) => {
+        await mount(<CertificateFormTestWrapper />);
+
+        await expect(page.getByTestId('select-registerOwner-trigger')).toHaveCount(0);
+        await expect(page.getByTestId('select-registerGroups-trigger')).toHaveCount(0);
+        await expect(page.getByRole('tab', { name: 'Ownership' })).toHaveCount(0);
+    });
+
+    test('Owner field lists users; Groups field is multi-select and lists groups', async ({ mount, page }) => {
+        await mount(
+            <CertificateFormTestWrapper
+                preloadedState={{
+                    users: { ...testInitialState.users, users: [ownerUser] },
+                    certificateGroups: { ...testInitialState.certificateGroups, certificateGroups: [certificateGroup] },
+                }}
+            />,
+        );
+
+        await page.getByTestId('requestType-register').click();
+        await page.getByRole('tab', { name: 'Ownership' }).click();
+
+        await page.getByTestId('select-registerOwner-trigger').click();
+        await expect(page.getByRole('option', { name: 'Jane Doe (jdoe)' })).toBeVisible();
+        await page.getByRole('option', { name: 'Jane Doe (jdoe)' }).click();
+        await expect(page.getByTestId('select-registerOwner-trigger')).toContainText('Jane Doe (jdoe)');
+
+        // Groups is a multi-select: selecting a group keeps the listbox open for further choices.
+        await page.getByTestId('select-registerGroups-trigger').click();
+        await page.getByRole('option', { name: 'Group One' }).click();
+        await expect(page.getByTestId('select-registerGroups-trigger')).toContainText('Group One');
+    });
+
+    test('Owner (optional) can be cleared back to empty after a selection', async ({ mount, page }) => {
+        await mount(<CertificateFormTestWrapper preloadedState={{ users: { ...testInitialState.users, users: [ownerUser] } }} />);
+
+        await page.getByTestId('requestType-register').click();
+        await page.getByRole('tab', { name: 'Ownership' }).click();
+
+        await page.getByTestId('select-registerOwner-trigger').click();
+        await page.getByRole('option', { name: 'Jane Doe (jdoe)' }).click();
+        await expect(page.getByTestId('select-registerOwner-trigger')).toContainText('Jane Doe (jdoe)');
+
+        // Optional owner must be resettable to empty (omitting ownerUuid means the registering user owns it).
+        await page.getByTestId('select-registerOwner-clear').click();
+        await expect(page.getByTestId('select-registerOwner-trigger')).toContainText('Select Owner');
+    });
+
+    test('Custom Attributes values survive an Issue<->Pre-register mode switch', async ({ mount, page }) => {
+        await mount(
+            <CertificateFormTestWrapper
+                preloadedState={{
+                    customAttributes: { ...testInitialState.customAttributes, resourceCustomAttributes: [customAttrDescriptor] },
+                }}
+            />,
+        );
+
+        const customField = page.getByTestId('text-input-__attributes__customCertificate__.customField');
+
+        await page.getByRole('tab', { name: 'Custom Attributes' }).click();
+        // Text inputs are readonly-until-focus (anti-autofill), so focus before filling.
+        await customField.click();
+        await customField.fill('keep-me');
+        await expect(customField).toHaveValue('keep-me');
+
+        // Toggle to Pre-register and back — the shared, always-mounted Custom Attributes editor must not remount/clear.
+        await page.getByTestId('requestType-register').click();
+        await page.getByTestId('requestType-issue').click();
+
+        await page.getByRole('tab', { name: 'Custom Attributes' }).click();
+        await expect(page.getByTestId('text-input-__attributes__customCertificate__.customField')).toHaveValue('keep-me');
+    });
+
+    test('Create is enabled in Pre-register mode with an empty Challenge', async ({ mount, page }) => {
+        await mount(
+            <CertificateFormTestWrapper
+                preloadedState={{ raprofiles: { ...testInitialState.raprofiles, raProfiles: [selectableRaProfile] } }}
+            />,
+        );
+
+        await page.getByTestId('requestType-register').click();
+        await page.getByTestId('select-raProfile-trigger').click();
+        await page.getByRole('option', { name: 'RA One' }).click();
+
+        await expect(page.getByRole('button', { name: 'Create' })).toBeEnabled();
+    });
+
+    test('a disabled RA Profile is not offered', async ({ mount, page }) => {
+        const disabledRaProfile = { uuid: 'ra-off', name: 'RA Disabled', authorityInstanceUuid: 'auth-1', enabled: false } as any;
+
+        await mount(
+            <CertificateFormTestWrapper
+                preloadedState={{ raprofiles: { ...testInitialState.raprofiles, raProfiles: [disabledRaProfile, selectableRaProfile] } }}
+            />,
+        );
+
+        await page.getByTestId('select-raProfile-trigger').click();
+
+        await expect(page.getByRole('option', { name: 'RA One' })).toBeVisible();
+        await expect(page.getByRole('option', { name: 'RA Disabled' })).toHaveCount(0);
+    });
+
+    test('selecting another RA Profile refetches the resolved request-attribute set for that profile', async ({ mount, page }) => {
+        const dispatched: { type: string; payload?: any }[] = [];
+        const secondRaProfile = { uuid: 'ra-2', name: 'RA Two', authorityInstanceUuid: 'auth-2', enabled: true } as any;
+
+        await mount(
+            <CertificateFormTestWrapper
+                onAction={(a) => dispatched.push(a)}
+                preloadedState={{ raprofiles: { ...testInitialState.raprofiles, raProfiles: [selectableRaProfile, secondRaProfile] } }}
+            />,
+        );
+
+        await page.getByTestId('select-raProfile-trigger').click();
+        await page.getByRole('option', { name: 'RA One' }).click();
+        await page.getByTestId('select-raProfile-trigger').click();
+        await page.getByRole('option', { name: 'RA Two' }).click();
+
+        const requestedProfiles = () =>
+            dispatched.filter((a) => a.type === 'certificates/getCsrAttributes').map((a) => a.payload.raProfileUuid);
+        await expect.poll(() => requestedProfiles().length).toBe(2);
+        expect(requestedProfiles()).toEqual(['ra-1', 'ra-2']);
+    });
+
+    test('registerCertificate payload omits authorizationSecret when the Challenge is left empty', async ({ mount, page }) => {
+        const dispatched: { type: string; payload?: any }[] = [];
+
+        await mount(
+            <CertificateFormTestWrapper
+                onAction={(a) => dispatched.push(a)}
+                preloadedState={{ raprofiles: { ...testInitialState.raprofiles, raProfiles: [selectableRaProfile] } }}
+            />,
+        );
+
+        await page.getByTestId('requestType-register').click();
+        await page.getByTestId('select-raProfile-trigger').click();
+        await page.getByRole('option', { name: 'RA One' }).click();
+        await page.getByRole('button', { name: 'Create' }).click();
+
+        await expect.poll(() => dispatched.find((a) => a.type === 'certificates/registerCertificate')).toBeTruthy();
+        const action = dispatched.find((a) => a.type === 'certificates/registerCertificate');
+        // Absent, not '' — an empty secret must not create an authorization row.
+        expect(action?.payload.registerRequest.authorizationSecret).toBeUndefined();
+    });
+
+    test('an all-whitespace Challenge is treated as no challenge at all', async ({ mount, page }) => {
+        const dispatched: { type: string; payload?: any }[] = [];
+
+        await mount(
+            <CertificateFormTestWrapper
+                onAction={(a) => dispatched.push(a)}
+                preloadedState={{ raprofiles: { ...testInitialState.raprofiles, raProfiles: [selectableRaProfile] } }}
+            />,
+        );
+
+        await page.getByTestId('requestType-register').click();
+        await page.getByTestId('select-raProfile-trigger').click();
+        await page.getByRole('option', { name: 'RA One' }).click();
+        // 12 spaces satisfy the length and printable-ASCII rules, but Core tests with String.isBlank()
+        // and would create no authorization row — so the UI must not present it as challenge-gated.
+        await page.getByTestId('authorizationSecret').fill('            ');
+
+        await expect(page.locator('#expiresAt')).toBeDisabled();
+
+        await page.getByRole('button', { name: 'Create' }).click();
+
+        await expect.poll(() => dispatched.find((a) => a.type === 'certificates/registerCertificate')).toBeTruthy();
+        const action = dispatched.find((a) => a.type === 'certificates/registerCertificate');
+        expect(action?.payload.registerRequest.authorizationSecret).toBeUndefined();
+    });
+
+    test('a too-short Challenge still blocks Create', async ({ mount, page }) => {
+        await mount(
+            <CertificateFormTestWrapper
+                preloadedState={{ raprofiles: { ...testInitialState.raprofiles, raProfiles: [selectableRaProfile] } }}
+            />,
+        );
+
+        await page.getByTestId('requestType-register').click();
+        await page.getByTestId('select-raProfile-trigger').click();
+        await page.getByRole('option', { name: 'RA One' }).click();
+        await page.getByTestId('authorizationSecret').fill('short');
+
+        await expect(page.getByRole('button', { name: 'Create' })).toBeDisabled();
+
+        // Empty is valid again — only a non-empty value is shape-checked.
+        await page.getByTestId('authorizationSecret').fill('');
+        await expect(page.getByRole('button', { name: 'Create' })).toBeEnabled();
+    });
+
+    test('Issuance window is disabled until a Challenge is entered', async ({ mount, page }) => {
+        await mount(<CertificateFormTestWrapper />);
+
+        await page.getByTestId('requestType-register').click();
+
+        // Core rejects expiresAt without a challenge, so the field is unreachable until one is given.
+        // The date field is a DatePicker (readonly, click-to-open) — address it by id, not test id.
+        await expect(page.locator('#expiresAt')).toBeDisabled();
+        await expect(page.getByTestId('label-tooltip-expiresAt')).toBeVisible();
+
+        await page.getByTestId('authorizationSecret').fill('challenge-secret');
+        await expect(page.locator('#expiresAt')).toBeEnabled();
+        await expect(page.getByTestId('label-tooltip-expiresAt')).toHaveCount(0);
+    });
+
+    test('clearing the Challenge clears and re-disables a filled Issuance window', async ({ mount, page }) => {
+        await mount(
+            <CertificateFormTestWrapper
+                preloadedState={{ raprofiles: { ...testInitialState.raprofiles, raProfiles: [selectableRaProfile] } }}
+            />,
+        );
+
+        await page.getByTestId('requestType-register').click();
+        await page.getByTestId('select-raProfile-trigger').click();
+        await page.getByRole('option', { name: 'RA One' }).click();
+        await page.getByTestId('authorizationSecret').fill('challenge-secret');
+
+        // Pick a date from next month so it satisfies the @Future rule whatever today is. The open click
+        // is dispatched straight at the input: the widget's busy spinner never resolves in CT (no epic
+        // dispatches the success for the mount-time listResourceCustomAttributes) and it sits over the
+        // date field, so a real mouse click — forced or not — would land on the spinner instead.
+        await page.locator('#expiresAt').dispatchEvent('click');
+        await page.getByRole('button', { name: 'Next' }).click();
+        await page.getByRole('button', { name: '15', exact: true }).click();
+        await expect(page.locator('#expiresAt')).not.toHaveValue('');
+
+        await page.getByTestId('authorizationSecret').fill('');
+        await expect(page.locator('#expiresAt')).toBeDisabled();
+        await expect(page.locator('#expiresAt')).toHaveValue('');
+    });
+
+    test('clearing the Challenge also clears a past-date error left on the Issuance window', async ({ mount, page }) => {
+        await mount(
+            <CertificateFormTestWrapper
+                preloadedState={{ raprofiles: { ...testInitialState.raprofiles, raProfiles: [selectableRaProfile] } }}
+            />,
+        );
+
+        await page.getByTestId('requestType-register').click();
+        await page.getByTestId('select-raProfile-trigger').click();
+        await page.getByRole('option', { name: 'RA One' }).click();
+        await page.getByTestId('authorizationSecret').fill('challenge-secret');
+
+        // Last month's 15th is always in the past, which the picker permits but @Future rejects.
+        await page.locator('#expiresAt').dispatchEvent('click');
+        await page.getByRole('button', { name: 'Previous' }).click();
+        await page.getByRole('button', { name: '15', exact: true }).click();
+        await expect(page.getByText('Issuance window must be a future date')).toBeVisible();
+
+        // Disabling the field takes it out of validation, so the error has to be cleared explicitly or it
+        // would sit under an empty, unreachable input.
+        await page.getByTestId('authorizationSecret').fill('');
+        await expect(page.getByText('Issuance window must be a future date')).toHaveCount(0);
+    });
+
+    test('registerCertificate payload includes selected owner/groups', async ({ mount, page }) => {
+        const dispatched: { type: string; payload?: any }[] = [];
+
+        await mount(
+            <CertificateFormTestWrapper
+                onAction={(a) => dispatched.push(a)}
+                preloadedState={{
+                    raprofiles: { ...testInitialState.raprofiles, raProfiles: [selectableRaProfile] },
+                    users: { ...testInitialState.users, users: [ownerUser] },
+                    certificateGroups: { ...testInitialState.certificateGroups, certificateGroups: [certificateGroup] },
+                }}
+            />,
+        );
+
+        await fillRegisterBasics(page);
+        await page.getByRole('tab', { name: 'Ownership' }).click();
+        await page.getByTestId('select-registerOwner-trigger').click();
+        await page.getByRole('option', { name: 'Jane Doe (jdoe)' }).click();
+        await page.getByTestId('select-registerGroups-trigger').click();
+        await page.getByRole('option', { name: 'Group One' }).click();
+
+        await page.getByRole('button', { name: 'Create' }).click();
+
+        await expect.poll(() => dispatched.find((a) => a.type === 'certificates/registerCertificate')).toBeTruthy();
+        const action = dispatched.find((a) => a.type === 'certificates/registerCertificate');
+        expect(action?.payload.registerRequest.ownerUuid).toBe('user-1');
+        expect(action?.payload.registerRequest.groupUuids).toEqual(['group-1']);
+    });
+
+    test('registerCertificate payload includes the entered register-attribute value', async ({ mount, page }) => {
+        const registerDescriptor: AttributeDescriptorModel = {
+            type: AttributeType.Data,
+            name: 'regField',
+            uuid: 'register-data-uuid-2',
+            contentType: AttributeContentType.String,
+            properties: { label: 'Register Field', required: true, readOnly: false, visible: true, list: false, multiSelect: false },
+        } as AttributeDescriptorModel;
+
+        const dispatched: { type: string; payload?: any }[] = [];
+
+        await mount(
+            <CertificateFormTestWrapper
+                onAction={(a) => dispatched.push(a)}
+                preloadedState={{
+                    raprofiles: { ...testInitialState.raprofiles, raProfiles: [selectableRaProfile] },
+                    certificates: { ...testInitialState.certificates, registerAttributes: { 'ra-1': [registerDescriptor] } },
+                }}
+            />,
+        );
+
+        await fillRegisterBasics(page);
+        await page.getByRole('tab', { name: 'Connector Attributes' }).click();
+
+        const regAttrInput = page.getByTestId('text-input-__attributes__register_attributes__.regField');
+        await regAttrInput.click();
+        await regAttrInput.fill('register-value');
+        await expect(regAttrInput).toHaveValue('register-value');
+
+        await page.getByRole('button', { name: 'Create' }).click();
+
+        await expect.poll(() => dispatched.find((a) => a.type === 'certificates/registerCertificate')).toBeTruthy();
+        const action = dispatched.find((a) => a.type === 'certificates/registerCertificate');
+        const attrs = action?.payload.registerRequest.attributes as { name: string; content?: { data?: unknown }[] }[] | undefined;
+        const regAttr = attrs?.find((a) => a.name === 'regField');
+        expect(regAttr?.content?.[0]?.data).toBe('register-value');
+    });
+
+    test('Create stays disabled while register attributes are still loading, even once CSR attributes have resolved', async ({
+        mount,
+        page,
+    }) => {
+        const dispatched: { type: string; payload?: any }[] = [];
+
+        await mount(
+            <CertificateFormTestWrapper
+                onAction={(a) => dispatched.push(a)}
+                preloadedState={{
+                    raprofiles: { ...testInitialState.raprofiles, raProfiles: [selectableRaProfile] },
+                    // CSR attributes have already resolved; only the register fetch is still in flight.
+                    certificates: {
+                        ...testInitialState.certificates,
+                        isFetchingCsrAttributes: false,
+                        isFetchingRegisterAttributes: true,
+                    },
+                }}
+            />,
+        );
+
+        await fillRegisterBasics(page);
+
+        // Submitting now would collect an empty register-attribute set and silently drop required
+        // connector attributes, so the button must stay disabled until the descriptors land.
+        const createButton = page.getByRole('button', { name: 'Create' });
+        await expect(createButton).toBeDisabled();
+
+        await createButton.dispatchEvent('click');
+        await expect.poll(() => dispatched.filter((a) => a.type === 'certificates/registerCertificate')).toHaveLength(0);
+    });
+
+    test('registerCertificate payload omits a request attribute whose default was cleared', async ({ mount, page }) => {
+        const dispatched: DispatchedAction[] = [];
+        const raprofiles = { ...testInitialState.raprofiles, raProfiles: [selectableRaProfile] };
+        await mount(
+            <CertificateFormTestWrapper onAction={(a) => dispatched.push(a)} preloadedState={{ raprofiles, ...csrAttributesState }} />,
+        );
+
+        await fillRegisterBasics(page);
+        await fillCommonNameAndClearSan(page);
+        await page.getByRole('button', { name: 'Create' }).click();
+
+        // An empty SAN would become part of the registered identity, which no CSR can ever match.
+        const submitted = await submittedCsrAttributes(
+            dispatched,
+            'certificates/registerCertificate',
+            (p) => p.registerRequest.csrAttributes,
+        );
+        expect(submitted).toEqual(onlyCommonNameSubmitted);
+    });
+
+    test('issueCertificate payload omits a request attribute whose default was cleared on the existing-key path', async ({
+        mount,
+        page,
+    }) => {
+        const dispatched: DispatchedAction[] = [];
+        const raprofiles = { ...testInitialState.raprofiles, raProfiles: [selectableRaProfile] };
+        await mount(
+            <CertificateFormTestWrapper
+                onAction={(a) => dispatched.push(a)}
+                preloadedState={{ raprofiles, ...csrAttributesState, ...existingKeyState }}
+            />,
+        );
+
+        await page.getByTestId('select-raProfile-trigger').click();
+        await page.getByRole('option', { name: 'RA One' }).click();
+        await selectExistingKey(page, 'keySource');
+        await page.getByRole('tab', { name: 'Request Attributes' }).click();
+        await fillCommonNameAndClearSan(page);
+        await page.getByRole('button', { name: 'Create' }).click();
+
+        // Core generates the CSR from these attributes, so an empty value would put an empty SAN into it.
+        const submitted = await submittedCsrAttributes(dispatched, 'certificates/issueCertificate', (p) => p.signRequest.csrAttributes);
+        expect(submitted).toEqual(onlyCommonNameSubmitted);
+    });
+
+    test('registerCertificate payload omits owner/groups when left empty', async ({ mount, page }) => {
+        const dispatched: { type: string; payload?: any }[] = [];
+
+        await mount(
+            <CertificateFormTestWrapper
+                onAction={(a) => dispatched.push(a)}
+                preloadedState={{ raprofiles: { ...testInitialState.raprofiles, raProfiles: [selectableRaProfile] } }}
+            />,
+        );
+
+        await fillRegisterBasics(page);
+        await page.getByRole('button', { name: 'Create' }).click();
+
+        await expect.poll(() => dispatched.find((a) => a.type === 'certificates/registerCertificate')).toBeTruthy();
+        const action = dispatched.find((a) => a.type === 'certificates/registerCertificate');
+        // Empty selections must be omitted (undefined) so issuance won't overwrite existing owner/groups.
+        expect(action?.payload.registerRequest.ownerUuid).toBeUndefined();
+        expect(action?.payload.registerRequest.groupUuids).toBeUndefined();
+    });
+
+    test.describe('an external CSR', () => {
+        const csr =
+            '-----BEGIN CERTIFICATE REQUEST-----\nMIIBWjCCAQACAQAwFjEUMBIGA1UEAwwLZXhhbXBsZS5jb20=\n-----END CERTIFICATE REQUEST-----';
+        // Each change of the content, with the request then submitted.
+        const contentChanges: [string, (page: Page) => Promise<void>, string][] = [
+            ['sends no earlier CSR once the text is cleared', (page) => page.getByLabel('File content').fill(''), ''],
+            [
+                'submits the CSR still shown once a file chosen in its place cannot be read',
+                async (page) => {
+                    await holdFileReads(page);
+                    const fileChooser = page.waitForEvent('filechooser');
+                    await page.getByRole('button', { name: 'Select file...' }).click();
+                    await (await fileChooser).setFiles({
+                        name: 'unreadable.csr',
+                        mimeType: 'application/pkcs10',
+                        buffer: Buffer.from('unreadable'),
+                    });
+                    await failFileRead(page, 0);
+                },
+                btoa(csr),
+            ],
+        ];
+
+        for (const [name, changeContent, request] of contentChanges) {
+            test(name, async ({ mount, page }) => {
+                const dispatched: { type: string; payload?: any }[] = [];
+                await mount(
+                    <CertificateFormTestWrapper
+                        onAction={(a) => dispatched.push(a)}
+                        preloadedState={{ raprofiles: { ...testInitialState.raprofiles, raProfiles: [selectableRaProfile] } }}
+                    />,
+                );
+                await page.getByTestId('select-raProfile-trigger').click();
+                await page.getByRole('option', { name: 'RA One' }).click();
+                await page.getByTestId('keySource-trigger').click();
+                await page.getByRole('option', { name: 'External', exact: true }).click();
+                await page.getByLabel('File content').fill(csr);
+
+                await changeContent(page);
+                await page.getByRole('button', { name: 'Create' }).click();
+
+                await expect.poll(() => dispatched.find((a) => a.type === 'certificates/issueCertificate')).toBeTruthy();
+                const action = dispatched.find((a) => a.type === 'certificates/issueCertificate');
+                expect(action?.payload.signRequest.request).toBe(request);
+            });
+        }
+    });
+
+    test.describe('issuance outcome', () => {
+        const issuedWithWarnings = {
+            certificates: {
+                ...testInitialState.certificates,
+                issueWarnings: { certificateUuid: 'cert-1', messages: ["Subject RDN 'O' is not allowed by the request-attribute set"] },
+            },
+        };
+
+        test('a lenient issuance with warnings shows them as accepted, with Open certificate in place of Create', async ({
+            mount,
+            page,
+        }) => {
+            await mount(<CertificateFormTestWrapper preloadedState={issuedWithWarnings} />);
+
+            const panel = page.getByTestId('compliance-errors-panel');
+            await expect(panel).toHaveAttribute('data-severity', 'warning');
+            await expect(panel).toHaveAttribute('role', 'status');
+            await expect(panel.getByText('Certificate request accepted with warnings')).toBeVisible();
+            await expect(panel.getByText("Subject RDN 'O' is not allowed by the request-attribute set")).toBeVisible();
+            await expect(page.getByRole('button', { name: 'Create' })).toHaveCount(0);
+            await expect(page.getByRole('button', { name: 'Cancel' })).toHaveCount(0);
+        });
+
+        test('Open certificate goes to the issued certificate', async ({ mount, page }) => {
+            await mount(<CertificateFormTestWrapper preloadedState={issuedWithWarnings} />);
+
+            await page.getByRole('button', { name: 'Open certificate' }).click();
+
+            await expect(page.getByTestId('current-location')).toHaveText('/certificates/detail/cert-1');
+        });
+
+        // The test store applies no actions, so these tests assert on what the form dispatches, not on what it renders.
+        const secondRaProfile = { ...selectableRaProfile, uuid: 'ra-2', name: 'RA Two' };
+        const acceptedWithProfiles = {
+            ...issuedWithWarnings,
+            raprofiles: { ...testInitialState.raprofiles, raProfiles: [selectableRaProfile, secondRaProfile] },
+        };
+        const resubmitsOrClears = (a: { type: string }) =>
+            a.type === 'certificates/issueCertificate' ||
+            a.type === 'certificates/registerCertificate' ||
+            a.type === 'certificates/clearIssueWarnings';
+        const csrAttributeFetches = (dispatched: { type: string }[]) =>
+            dispatched.filter((a) => a.type === 'certificates/getCsrAttributes').length;
+
+        // Opening the form clears a previous result once; only what follows it is the form reacting to edits.
+        async function mountAccepted(mount: any, onAction: (a: { type: string }) => void, seen: { type: string }[]) {
+            await mount(<CertificateFormTestWrapper preloadedState={acceptedWithProfiles} onAction={onAction} />);
+            await expect.poll(() => seen.some((a) => a.type === 'certificates/clearIssueWarnings')).toBe(true);
+            seen.length = 0;
+        }
+
+        async function pickRaProfile(page: import('@playwright/test').Page, name: string) {
+            await page.getByTestId('select-raProfile-trigger').click();
+            await page.getByRole('option', { name }).click();
+        }
+
+        test('the accepted form cannot be submitted again', async ({ mount, page }) => {
+            const dispatched: { type: string }[] = [];
+            await mountAccepted(mount, (a) => dispatched.push(a), dispatched);
+            await fillRegisterBasics(page);
+            // With Create gone Enter cannot submit either, so the submit is requested directly.
+            await page.locator('form').evaluate((form: HTMLFormElement) => form.requestSubmit());
+
+            // A later profile switch dispatches in order after the submit, so once it arrives the submit has too.
+            await pickRaProfile(page, 'RA Two');
+            await expect.poll(() => csrAttributeFetches(dispatched)).toBe(2);
+
+            expect(dispatched.filter(resubmitsOrClears)).toEqual([]);
+        });
+
+        test('editing the form after acceptance keeps the result and does not bring Create back', async ({ mount, page }) => {
+            const dispatched: { type: string }[] = [];
+            await mountAccepted(mount, (a) => dispatched.push(a), dispatched);
+
+            await pickRaProfile(page, 'RA One');
+            await pickRaProfile(page, 'RA Two');
+            await page.getByTestId('keySource-trigger').click();
+            await page.getByRole('option', { name: 'External', exact: true }).click();
+            await expect.poll(() => csrAttributeFetches(dispatched)).toBe(2);
+
+            expect(dispatched.filter((a) => a.type === 'certificates/clearIssueErrors').length).toBeGreaterThan(0);
+            expect(dispatched.filter(resubmitsOrClears)).toEqual([]);
+            await expect(page.getByRole('button', { name: 'Open certificate' })).toBeVisible();
+            await expect(page.getByRole('button', { name: 'Create' })).toHaveCount(0);
+        });
+
+        test('Close leaves the form without blocking', async ({ mount, page }) => {
+            let closed = false;
+            await mount(
+                <CertificateFormTestWrapper
+                    preloadedState={issuedWithWarnings}
+                    onCancel={() => {
+                        closed = true;
+                    }}
+                />,
+            );
+
+            await page.getByRole('button', { name: 'Close', exact: true }).click();
+
+            await expect.poll(() => closed).toBe(true);
+            expect(closed).toBe(true);
+        });
+
+        test('a strict rejection shows the error panel and keeps Create', async ({ mount, page }) => {
+            await mount(
+                <CertificateFormTestWrapper
+                    preloadedState={{
+                        raprofiles: { ...testInitialState.raprofiles, raProfiles: [selectableRaProfile] },
+                        certificates: { ...testInitialState.certificates, issueValidationErrors: ['Subject CN is required'] },
+                    }}
+                />,
+            );
+            await page.getByTestId('select-raProfile-trigger').click();
+            await page.getByRole('option', { name: 'RA One' }).click();
+
+            const panel = page.getByTestId('compliance-errors-panel');
+            await expect(panel).toHaveAttribute('data-severity', 'error');
+            await expect(panel).toHaveAttribute('role', 'alert');
+            await expect(panel.getByText('Subject CN is required')).toBeVisible();
+            await expect(page.getByRole('button', { name: 'Create' })).toBeVisible();
+            await expect(page.getByRole('button', { name: 'Open certificate' })).toHaveCount(0);
+        });
+
+        test('neither warnings nor errors leaves the panel hidden', async ({ mount, page }) => {
+            await mount(
+                <CertificateFormTestWrapper
+                    preloadedState={{ raprofiles: { ...testInitialState.raprofiles, raProfiles: [selectableRaProfile] } }}
+                />,
+            );
+            await page.getByTestId('select-raProfile-trigger').click();
+            await page.getByRole('option', { name: 'RA One' }).click();
+
+            await expect(page.getByTestId('compliance-errors-panel')).toHaveCount(0);
+            await expect(page.getByRole('button', { name: 'Create' })).toBeVisible();
+        });
+    });
+});

@@ -1,0 +1,223 @@
+name: Publish Charts
+on:
+  push:
+    branches: [ main ]
+    tags:
+      - '*'
+
+jobs:
+  publish:
+    name: Publish
+    runs-on: ubuntu-latest
+
+    env:
+      BRANCH: main
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0  # Shallow clones should be disabled for a better relevancy of analysis
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.10.0
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+          check-latest: true
+
+      - name: Set up chart-testing
+        uses: helm/chart-testing-action@v2.7.0
+
+      - name: Detect Changed Charts
+        id: detect-changes
+        run: |
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            echo "📦 Detected tag push: $GITHUB_REF"
+
+            # Get previous tag
+            last_tag=$(git for-each-ref --sort=-creatordate --count=2 --format="%(refname:short)" "refs/tags/*" | sed -n '2p')
+            echo "Last tag: $last_tag"
+            echo "last_tag=$last_tag" >> $GITHUB_ENV
+
+            changed=$(ct list-changed --target-branch "$BRANCH" --since "$last_tag")
+          else
+            echo "🔀 Detected branch push (likely a merge)"
+            changed=$(ct list-changed --target-branch "$BRANCH" --since HEAD^1)
+          fi
+          
+          echo "${changed}"
+          
+          if [[ -n "$changed" ]]; then
+            echo "✅ Charts changed"
+            echo "changed=true" >> $GITHUB_ENV
+
+            # The ilm umbrella packages a frozen copy of every subchart, so any
+            # chart change must also republish the umbrella — otherwise the
+            # deployed umbrella artifact keeps the old subchart copy. If it is
+            # not already in the changed set, add it so the version check
+            # validates it and it is released last.
+            if echo "$changed" | grep -qx "charts/ilm"; then
+              echo "umbrella_in_set=true" >> $GITHUB_ENV
+            else
+              echo "umbrella_in_set=false" >> $GITHUB_ENV
+              echo "ℹ️ Adding charts/ilm so the umbrella is republished"
+              changed=$(printf '%s\ncharts/ilm' "$changed")
+            fi
+
+            echo "changed_charts<<EOF" >> $GITHUB_ENV
+            echo "$changed" >> $GITHUB_ENV
+            echo "EOF" >> $GITHUB_ENV
+          else
+            echo "ℹ️ No chart changes detected"
+            echo "changed=false" >> $GITHUB_ENV
+          fi
+
+      - name: Skip checking when no charts changed
+        if: env.changed != 'true'
+        run: echo "No chart changes detected — skipping checks." && exit 0
+
+      - name: Check for Development Versions
+        if: env.changed == 'true' && github.ref_type == 'branch'
+        env:
+          changed_charts: ${{ env.changed_charts }}
+        run: |
+          for CHART in $changed_charts; do
+            echo "🔍 Checking chart $CHART for development version"
+            version=$(yq ".version" < "${CHART}/Chart.yaml")
+            if [[ $version != *-develop ]]; then
+              echo "❌ Chart $CHART has version '$version' but should be a development version (*-develop)"
+              exit 1
+            fi
+          done
+
+      - name: Check for Release Versions
+        if: env.changed == 'true' && github.ref_type == 'tag'
+        env:
+          changed_charts: ${{ env.changed_charts }}
+        run: |
+          for CHART in $changed_charts; do
+            echo "🔍 Checking chart $CHART for release-ready version"
+            version=$(yq ".version" < "${CHART}/Chart.yaml")
+            if [[ $version == *-develop ]]; then
+              echo "❌ Chart $CHART has development version '$version' in a release branch"
+              exit 1
+            fi
+          done
+
+      - name: Run chart-testing (lint)
+        if: env.changed == 'true'
+        env:
+          last_tag: ${{ env.last_tag }}
+        run: |
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            ct lint --target-branch "$BRANCH" --since $last_tag --check-version-increment=false
+          else
+            ct lint --target-branch "$BRANCH" --since HEAD^1 --check-version-increment=false
+          fi
+
+      # When only a subchart changed, the umbrella is force-added to the publish
+      # set above but not linted by the --since lint (which uses git diff). Lint
+      # it explicitly so a broken umbrella render is caught before publishing.
+      - name: Lint ilm umbrella (subchart change)
+        if: env.changed == 'true' && env.umbrella_in_set != 'true'
+        run: |
+          helm dependency update charts/ilm
+          ct lint --target-branch "$BRANCH" --charts charts/ilm --check-version-increment=false
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@main
+        with:
+          cosign-release: 'v2.0.0'
+
+      - name: Publish charts
+        if: env.changed == 'true'
+        env:
+          changed_charts: ${{ env.changed_charts }}
+          HELM_OCI_REGISTRY: hub.omnitrustregistry.com
+          HELM_OCI_REPOSITORY: ilm-helm
+          HELM_USERNAME: ${{ secrets.CONTAINER_REGISTRY_USERNAME }}
+          HELM_PASSWORD: ${{ secrets.CONTAINER_REGISTRY_PASSWORD }}
+          COSIGN_PRIVATE_KEY: ${{secrets.COSIGN_PRIVATE_KEY}}
+          COSIGN_PASSWORD: ${{secrets.COSIGN_PASSWORD}}
+        run: |
+          echo "Logging in to $HELM_OCI_REGISTRY"
+          helm registry login $HELM_OCI_REGISTRY --username $HELM_USERNAME --password $HELM_PASSWORD
+          
+          cosign login $HELM_OCI_REGISTRY --username $HELM_USERNAME --password $HELM_PASSWORD
+          
+          release_chart(){
+            CHART=$1
+            
+            name=$(yq ".name" < ${CHART}/Chart.yaml)
+            version=$(yq ".version" < ${CHART}/Chart.yaml)
+          
+            echo "Releasing chart $CHART with version $version"
+          
+            helm dependency update $CHART
+            helm package $CHART
+            pushed=$(helm push $name-$version.tgz oci://$HELM_OCI_REGISTRY/$HELM_OCI_REPOSITORY)
+          
+            digest=$(echo "$pushed" | awk 'FNR == 2 {print $2}')
+          
+            cosign sign --yes --key env://COSIGN_PRIVATE_KEY $HELM_OCI_REGISTRY/$HELM_OCI_REPOSITORY/$name@$digest
+          
+            echo "Chart $name-$version pushed"
+            
+            # create develop tag 0.0.0 only in case of branch push
+            if [[ "${{ github.ref_type }}" == "branch" ]]; then
+              # SPECIFIC TO HARBOR
+              echo "Check if develop tag 0.0.0 exists and remove it"
+              pulled=$(helm pull oci://$HELM_OCI_REGISTRY/$HELM_OCI_REPOSITORY/$name --version 0.0.0 2>&1 || true)
+              if [[ $pulled == *"Digest:"* ]]; then
+                removeFrom=$(echo "$pulled" | awk 'FNR == 2 {print $2}')
+                echo "Tag 0.0.0 exists, remove it from $removeFrom"
+                curl --user $HELM_USERNAME:$HELM_PASSWORD --request DELETE --silent --show-error \
+                  https://$HELM_OCI_REGISTRY/api/v2.0/projects/$HELM_OCI_REPOSITORY/repositories/$name/artifacts/$removeFrom/tags/0.0.0
+              fi
+            
+              echo "Create new develop tag 0.0.0"
+              curl --user $HELM_USERNAME:$HELM_PASSWORD --request POST --header "Content-Type: application/json" \
+                --silent --show-error --data '{"name":"0.0.0"}' \
+                https://$HELM_OCI_REGISTRY/api/v2.0/projects/$HELM_OCI_REPOSITORY/repositories/$name/artifacts/$digest/tags
+            fi
+          }
+          
+          # we need to release the charts in the correct order because of dependencies
+          # first is the library chart
+          
+          # check if the library chart has changed
+          if [[ $changed_charts == *"charts/ilm-lib"* ]]; then
+            echo "charts/ilm-lib has changed, releasing it first"
+            release_chart charts/ilm-lib
+            # remove the library chart from the list of changed charts
+            changed_charts=$(echo $changed_charts | sed s:charts/ilm-lib::)
+          fi
+          
+          umbrella_changed=false
+          # ilm umbrella chart must be released as last one
+          if [[ $changed_charts == *"charts/ilm"* ]]; then
+            echo "charts/ilm has changed, mark to released it as last"
+            umbrella_changed=true
+            # remove the umbrella chart from the list of changed charts
+            changed_charts=$(echo $changed_charts | sed s:charts/ilm::)
+          fi
+          
+          # release all other charts, there should not be any dependency conflict
+          for CHART in $changed_charts
+          do
+            echo "Releasing $CHART"
+            release_chart $CHART
+          done
+          
+          # when the umbrella chart has changed, release it as last one
+          if [[ $umbrella_changed == "true" ]]; then
+            echo "Releasing charts/ilm"
+            release_chart charts/ilm
+          fi
+          
+          echo "Logging out from $HELM_OCI_REGISTRY"
+          helm registry logout $HELM_OCI_REGISTRY

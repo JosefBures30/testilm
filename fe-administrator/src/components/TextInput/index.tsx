@@ -1,0 +1,212 @@
+import cn from 'classnames';
+import { type KeyboardEvent, type ReactNode, useEffect, useId, useRef, useState } from 'react';
+import { Eye, EyeOff } from 'lucide-react';
+import Label from 'components/Label';
+import DatePicker from 'components/DatePicker';
+import TextArea from 'components/TextArea';
+import { inputBaseClassName } from './inputStyles';
+import { joinAriaIds } from 'utils/aria';
+
+export { inputBaseClassName } from './inputStyles';
+
+type Props = {
+    value?: string;
+    onChange: (value: string) => void;
+    onBlur?: () => void;
+    onKeyDown?: (event: KeyboardEvent<HTMLInputElement>) => void;
+    placeholder?: string;
+    disabled?: boolean;
+    id?: string;
+    type?: 'text' | 'textarea' | 'number' | 'email' | 'password' | 'date' | 'time' | 'datetime-local';
+    invalid?: boolean;
+    error?: string;
+    label?: string;
+    labelTooltip?: string;
+    className?: string;
+    required?: boolean;
+    buttonRight?: ReactNode;
+    dataTestId?: string;
+    /** Id of an element describing the field (typically an error paragraph) — announced by screen readers. */
+    ariaDescribedBy?: string;
+    /** Virtual keyboard hint; a numeric field kept as `type="text"` so the validator sees what was typed uses `numeric`. */
+    inputMode?: 'numeric' | 'decimal' | 'text';
+};
+
+function TextInput({
+    value,
+    onChange,
+    onBlur,
+    onKeyDown,
+    placeholder,
+    disabled,
+    id,
+    type = 'text',
+    invalid = false,
+    error,
+    label,
+    labelTooltip,
+    className,
+    required = false,
+    buttonRight,
+    dataTestId,
+    ariaDescribedBy,
+    inputMode,
+}: Readonly<Props>) {
+    const inputRef = useRef<HTMLInputElement>(null);
+    const generatedId = useId();
+    const errorIdPrefix = id ?? `text-input-${generatedId.replaceAll(':', '')}`;
+    const errorId = `${errorIdPrefix}-error`;
+    // The error paragraph is always announced; a caller's own describing element (help text) comes along with it.
+    // DatePicker and TextArea compose the same way themselves, so they get the raw ids and no repeated token.
+    const describedBy = joinAriaIds(ariaDescribedBy, error ? errorId : undefined);
+    const [passwordVisible, setPasswordVisible] = useState(false);
+    const passwordToggleTargetId = type === 'password' ? id || `text-input-password-${generatedId.replaceAll(':', '')}` : null;
+
+    // Disable autofill by making the field readOnly on mount, then removing it on focus
+    useEffect(() => {
+        if (inputRef.current && type !== 'password' && type !== 'date') {
+            inputRef.current.setAttribute('readonly', 'readonly');
+            const handleFocus = () => {
+                if (inputRef.current) {
+                    inputRef.current.removeAttribute('readonly');
+                }
+            };
+            const input = inputRef.current;
+            input.addEventListener('focus', handleFocus);
+            return () => {
+                input.removeEventListener('focus', handleFocus);
+            };
+        }
+    }, [type]);
+
+    const getAutoComplete = () => {
+        if (type === 'password') {
+            return 'new-password';
+        }
+        return 'off';
+    };
+
+    if (type === 'date') {
+        return (
+            <>
+                {label && (
+                    <Label htmlFor={id} required={required} labelTooltip={labelTooltip}>
+                        {label}
+                    </Label>
+                )}
+                <DatePicker
+                    value={value}
+                    onChange={onChange}
+                    onBlur={onBlur}
+                    disabled={disabled}
+                    id={id}
+                    invalid={invalid}
+                    error={error}
+                    className={className}
+                    required={required}
+                    ariaDescribedBy={ariaDescribedBy}
+                    errorId={errorId}
+                />
+            </>
+        );
+    }
+
+    if (type === 'textarea') {
+        return (
+            <>
+                {label && (
+                    <Label htmlFor={id} required={required} labelTooltip={labelTooltip}>
+                        {label}
+                    </Label>
+                )}
+                <TextArea
+                    value={value}
+                    onChange={onChange}
+                    onBlur={onBlur}
+                    placeholder={placeholder}
+                    disabled={disabled}
+                    id={id}
+                    invalid={invalid}
+                    error={error}
+                    className={className}
+                    required={required}
+                    ariaDescribedBy={ariaDescribedBy}
+                    errorId={errorId}
+                />
+            </>
+        );
+    }
+
+    const resolveType = () => {
+        if (type !== 'password') return type;
+        return passwordVisible ? 'text' : 'password';
+    };
+    const resolvedType = resolveType();
+
+    return (
+        <>
+            {label && (
+                <Label htmlFor={id} required={required} labelTooltip={labelTooltip}>
+                    {label}
+                </Label>
+            )}
+            <div className="relative w-full">
+                <input
+                    ref={inputRef}
+                    type={resolvedType}
+                    className={cn(
+                        inputBaseClassName,
+                        {
+                            'border-danger focus:border-danger focus:ring-danger': invalid,
+                        },
+                        {
+                            'bg-surface': disabled,
+                            'pr-10': !!buttonRight || type === 'password',
+                        },
+                        className,
+                    )}
+                    placeholder={placeholder}
+                    value={value || ''}
+                    onChange={(e) => onChange(e.target.value)}
+                    onBlur={onBlur}
+                    onKeyDown={onKeyDown}
+                    disabled={disabled}
+                    id={passwordToggleTargetId ?? id}
+                    aria-invalid={invalid || undefined}
+                    aria-describedby={describedBy}
+                    inputMode={inputMode}
+                    autoComplete={getAutoComplete()}
+                    data-form-type="other"
+                    data-testid={dataTestId ?? (id ? `text-input-${id}` : 'text-input')}
+                />
+                {type === 'password' && (
+                    <button
+                        type="button"
+                        onClick={() => setPasswordVisible((v) => !v)}
+                        className="absolute inset-y-0 end-0 flex items-center z-10 p-3.5 text-content-subtle hover:text-content-muted focus:outline-none disabled:pointer-events-none"
+                        aria-label={passwordVisible ? 'Hide password' : 'Show password'}
+                        tabIndex={-1}
+                    >
+                        {passwordVisible ? (
+                            <Eye className="size-4 shrink-0" aria-hidden />
+                        ) : (
+                            <EyeOff className="size-4 shrink-0" aria-hidden />
+                        )}
+                    </button>
+                )}
+                {buttonRight && (
+                    <div className="absolute right-0 top-[50%] translate-y-[-50%] h-full flex items-center justify-center w-[40px] border-l border-divider">
+                        {buttonRight}
+                    </div>
+                )}
+            </div>
+            {error && (
+                <p id={errorId} className="mt-1 text-sm text-danger">
+                    {error}
+                </p>
+            )}
+        </>
+    );
+}
+
+export default TextInput;

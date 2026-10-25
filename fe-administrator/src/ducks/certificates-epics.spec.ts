@@ -1,0 +1,1625 @@
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
+import type { UnknownAction } from '@reduxjs/toolkit';
+import { firstValueFrom, of, Subject, throwError, type Observable } from 'rxjs';
+import { take, toArray } from 'rxjs/operators';
+
+// Break the certificates-epics → ../App → ../store → ducks/index → certificates-epics cycle
+// by stubbing the App module. Epic logic doesn't need the real store in unit tests.
+vi.mock('../App', () => ({ store: { dispatch: () => {} } }));
+
+// Keep the real fileNameFromContentDisposition (the download epics rely on its parsing) and
+// spy on triggerBlobDownload only, so the tests can assert what the epic handed it.
+vi.mock('utils/download', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('utils/download')>();
+    return { ...actual, triggerBlobDownload: vi.fn() };
+});
+
+// Stub the heavy transform module (it pulls in React components that drag the
+// full ducks/index.ts → store.ts chain back through this file). Tests only need
+// the identity passthrough.
+vi.mock('./transform/certificates', () => ({
+    transformCertificateDetailResponseDtoToModel: (cert: unknown) => cert,
+    transformCertificateRevokeRequestModelToDto: (req: unknown) => req,
+    transformSearchRequestModelToDto: (req: unknown) => req,
+    transformCertificateBulkDeleteRequestModelToDto: (req: unknown) => req,
+    transformCertificateBulkDeleteResponseDtoToModel: (res: unknown) => res,
+    transformCertificateBulkObjectModelToDto: (req: unknown) => req,
+    transformCertificateObjectModelToDto: (req: unknown) => req,
+    transformCertificateRenewRequestModelToDto: (req: unknown) => req,
+    transformCertificateRekeyRequestModelToDto: (req: unknown) => req,
+    transformCertificateSignRequestModelToDto: (req: unknown) => req,
+    transformCertificateComplianceCheckDtoToModel: (req: unknown) => req,
+    transformCertificateContentResponseDtoToModel: (req: unknown) => req,
+    transformCertificateRelationsDtoToModel: (req: unknown) => req,
+    transformValidationCertificateResultDtoToModel: (req: unknown) => req,
+    transformCertificateChainResponseDtoToModel: (req: unknown) => req,
+    transformCertificateHistoryDtoToModel: (req: unknown) => req,
+    transformCertificateHistoryResponseDtoToModel: (req: unknown) => req,
+    transformDownloadCertificateChainResponseDtoToModel: (req: unknown) => req,
+    transformDownloadCertificateResponseDtoToModel: (req: unknown) => req,
+    transformCertificateResponseDtoToModel: (req: unknown) => req,
+    transformCertificateListResponseDtoToModel: (req: unknown) => req,
+    transformCertificateUploadModelToDto: (req: unknown) => req,
+    transformCertificateRegistrationRequestModelToDto: (req: unknown) => req,
+}));
+
+import { AjaxError } from 'rxjs/ajax';
+import { InspectedEntryKind } from 'types/openapi';
+import { triggerBlobDownload } from 'utils/download';
+import { extractError } from 'utils/net';
+import { actions as certificatesActions } from './certificates';
+import { actions as alertActions } from './alerts';
+import { actions as appRedirectActions } from './app-redirect';
+import { EntityType } from './filters';
+import { actions as pagingActions } from './paging';
+import certificatesEpics from './certificates-epics';
+
+// Resolve epics by function name rather than by position — inserting an epic anywhere in the array
+// would otherwise silently shift every index below it and break unrelated tests.
+function findEpicIndex(name: string) {
+    const index = (certificatesEpics as { name: string }[]).findIndex((epic) => epic.name === name);
+    if (index === -1) throw new Error(`Epic "${name}" not found in certificates-epics`);
+    return index;
+}
+
+const ASSOCIATE_EPIC_INDEX = findEpicIndex('associateCertificate');
+const DEASSOCIATE_EPIC_INDEX = findEpicIndex('deassociateCertificate');
+const ISSUE_EPIC_INDEX = findEpicIndex('issueCertificate');
+const REGISTER_EPIC_INDEX = findEpicIndex('registerCertificate');
+const COMPLETE_REGISTERED_EPIC_INDEX = findEpicIndex('completeRegisteredCertificate');
+const REVOKE_EPIC_INDEX = findEpicIndex('revokeCertificate');
+const RENEW_EPIC_INDEX = findEpicIndex('renewCertificate');
+const REKEY_EPIC_INDEX = findEpicIndex('rekeyCertificate');
+const MANUALLY_ISSUE_EPIC_INDEX = findEpicIndex('manuallyIssueCertificate');
+const MANUALLY_CONFIRM_REVOKE_EPIC_INDEX = findEpicIndex('manuallyConfirmRevoke');
+const CANCEL_PENDING_EPIC_INDEX = findEpicIndex('cancelPendingCertificateOperation');
+const BULK_UPDATE_RA_PROFILE_EPIC_INDEX = findEpicIndex('bulkUpdateRaProfile');
+const BULK_DELETE_EPIC_INDEX = findEpicIndex('bulkDelete');
+const UPLOAD_EPIC_INDEX = findEpicIndex('uploadCertificate');
+const GET_REGISTER_ATTRIBUTES_EPIC_INDEX = findEpicIndex('getRegisterAttributes');
+const GET_CSR_ATTRIBUTES_EPIC_INDEX = findEpicIndex('getCsrAttributes');
+const GET_RENEW_ATTRIBUTES_EPIC_INDEX = findEpicIndex('getRenewAttributes');
+const GET_IDENTIFY_ATTRIBUTES_EPIC_INDEX = findEpicIndex('getIdentifyAttributes');
+const UPDATE_RA_PROFILE_EPIC_INDEX = findEpicIndex('updateRaProfile');
+const IMPORT_CERTIFICATES_EPIC_INDEX = findEpicIndex('importCertificates');
+const DOWNLOAD_KEYSTORE_EPIC_INDEX = findEpicIndex('downloadKeystore');
+
+// A real AjaxError, so extractError reads Core's response body the way it does at runtime.
+const coreError = (status: number, response: unknown) => new AjaxError('failed', { status, response } as never, {} as never);
+
+type ClientOpsOverrides = {
+    issueCertificate?: (args: any) => any;
+    revokeCertificate?: (args: any) => any;
+    renewCertificate?: (args: any) => any;
+    rekeyCertificate?: (args: any) => any;
+    manuallyIssueCertificate?: (args: any) => any;
+    manuallyConfirmRevoke?: (args: any) => any;
+    cancelPendingCertificateOperation?: (args: any) => any;
+};
+
+async function runEpic(
+    epicIndex: number,
+    action: UnknownAction,
+    overrides: ClientOpsOverrides = {},
+    takeCount = 4,
+): Promise<UnknownAction[]> {
+    const epics = certificatesEpics as ((action$: any, state$: any, deps: any) => Observable<UnknownAction>)[];
+
+    const minimalCert = {
+        uuid: 'cert-1',
+        commonName: 'cn',
+        subjectDn: 'CN=cn',
+        publicKeyAlgorithm: 'RSA',
+        signatureAlgorithm: 'SHA256withRSA',
+        keySize: 2048,
+        state: 'issued',
+        validationStatus: 'valid',
+        privateKeyAvailability: false,
+    };
+
+    const defaults = {
+        revokeCertificate: () => of(undefined),
+        manuallyIssueCertificate: () => of(minimalCert),
+        manuallyConfirmRevoke: () => of(undefined),
+        cancelPendingCertificateOperation: () => of(minimalCert),
+    };
+
+    const deps = {
+        apiClients: {
+            clientOperations: { ...defaults, ...overrides },
+        },
+    };
+
+    const output$ = epics[epicIndex](of(action), of({}) as any, deps as any);
+    return firstValueFrom(output$.pipe(take(takeCount), toArray()));
+}
+
+async function runUploadEpic(
+    action: UnknownAction,
+    certificatesOverrides: { uploadAsync?: (args: any) => any } = {},
+    takeCount = 2,
+): Promise<UnknownAction[]> {
+    const epics = certificatesEpics as ((action$: any, state$: any, deps: any) => Observable<UnknownAction>)[];
+    const deps = {
+        apiClients: {
+            certificates: {
+                uploadAsync: () => of({ fingerprint: 'fp-1' }),
+                ...certificatesOverrides,
+            },
+        },
+    };
+    const state$ = { value: { certificates: { isIncludeArchived: false } } };
+    const output$ = epics[UPLOAD_EPIC_INDEX](of(action), state$ as any, deps as any);
+    return firstValueFrom(output$.pipe(take(takeCount), toArray()));
+}
+
+async function runAssociateEpic(
+    action: UnknownAction,
+    associateCertificates: (args: any) => any = () => of(undefined),
+    takeCount = 1,
+): Promise<{ emitted: UnknownAction[]; calls: any[] }> {
+    const epics = certificatesEpics as ((action$: any, state$: any, deps: any) => Observable<UnknownAction>)[];
+    const calls: any[] = [];
+    const deps = {
+        apiClients: {
+            certificates: {
+                associateCertificates: (args: any) => {
+                    calls.push(args);
+                    return associateCertificates(args);
+                },
+            },
+        },
+    };
+    const output$ = epics[ASSOCIATE_EPIC_INDEX](of(action), of({}) as any, deps as any);
+    const emitted = await firstValueFrom(output$.pipe(take(takeCount), toArray()));
+    return { emitted, calls };
+}
+
+async function runDeassociateEpic(
+    action: UnknownAction,
+    removeCertificateAssociation: (args: any) => any = () => of(undefined),
+    takeCount = 1,
+): Promise<{ emitted: UnknownAction[]; calls: any[] }> {
+    const epics = certificatesEpics as ((action$: any, state$: any, deps: any) => Observable<UnknownAction>)[];
+    const calls: any[] = [];
+    const deps = {
+        apiClients: {
+            certificates: {
+                removeCertificateAssociation: (args: any) => {
+                    calls.push(args);
+                    return removeCertificateAssociation(args);
+                },
+            },
+        },
+    };
+    const output$ = epics[DEASSOCIATE_EPIC_INDEX](of(action), of({}) as any, deps as any);
+    const emitted = await firstValueFrom(output$.pipe(take(takeCount), toArray()));
+    return { emitted, calls };
+}
+
+async function runRegisterEpic(
+    action: UnknownAction,
+    registerCertificate: (args: any) => any = () => of({ uuid: 'cert-1' }),
+    takeCount = 3,
+): Promise<{ emitted: UnknownAction[]; calls: any[] }> {
+    const epics = certificatesEpics as ((action$: any, state$: any, deps: any) => Observable<UnknownAction>)[];
+    const calls: any[] = [];
+    const deps = {
+        apiClients: {
+            clientOperations: {
+                registerCertificate: (args: any) => {
+                    calls.push(args);
+                    return registerCertificate(args);
+                },
+            },
+        },
+    };
+    const output$ = epics[REGISTER_EPIC_INDEX](of(action), of({}) as any, deps as any);
+    const emitted = await firstValueFrom(output$.pipe(take(takeCount), toArray()));
+    return { emitted, calls };
+}
+
+async function runCompleteRegisteredEpic(
+    action: UnknownAction,
+    issueExistingCertificate: (args: any) => any = () => of({ uuid: 'cert-1' }),
+    takeCount = 3,
+): Promise<{ emitted: UnknownAction[]; calls: any[] }> {
+    const epics = certificatesEpics as ((action$: any, state$: any, deps: any) => Observable<UnknownAction>)[];
+    const calls: any[] = [];
+    const deps = {
+        apiClients: {
+            clientOperations: {
+                issueExistingCertificate: (args: any) => {
+                    calls.push(args);
+                    return issueExistingCertificate(args);
+                },
+            },
+        },
+    };
+    const output$ = epics[COMPLETE_REGISTERED_EPIC_INDEX](of(action), of({}) as any, deps as any);
+    const emitted = await firstValueFrom(output$.pipe(take(takeCount), toArray()));
+    return { emitted, calls };
+}
+
+async function runGetRegisterAttributesEpic(
+    action: UnknownAction,
+    listRegisterCertificateAttributes: (args: any) => Observable<any> = () => of([]),
+    takeCount = 1,
+): Promise<{ emitted: UnknownAction[]; calls: any[] }> {
+    const epics = certificatesEpics as ((action$: any, state$: any, deps: any) => Observable<UnknownAction>)[];
+    const calls: any[] = [];
+    const deps = {
+        apiClients: {
+            clientOperations: {
+                listRegisterCertificateAttributes: (args: any) => {
+                    calls.push(args);
+                    return listRegisterCertificateAttributes(args);
+                },
+            },
+        },
+    };
+    const output$ = epics[GET_REGISTER_ATTRIBUTES_EPIC_INDEX](of(action), of({}) as any, deps as any);
+    const emitted = await firstValueFrom(output$.pipe(take(takeCount), toArray()));
+    return { emitted, calls };
+}
+
+async function runSchemaEpic(
+    epicIndex: number,
+    listOperation: 'listRenewCertificateAttributes' | 'listIdentifyCertificateAttributes',
+    action: UnknownAction,
+    list: (args: any) => Observable<any> = () => of([]),
+    takeCount = 1,
+): Promise<{ emitted: UnknownAction[]; calls: any[] }> {
+    const epics = certificatesEpics as ((action$: any, state$: any, deps: any) => Observable<UnknownAction>)[];
+    const calls: any[] = [];
+    const deps = {
+        apiClients: {
+            clientOperations: {
+                [listOperation]: (args: any) => {
+                    calls.push(args);
+                    return list(args);
+                },
+            },
+        },
+    };
+    const output$ = epics[epicIndex](of(action), of({}) as any, deps as any);
+    const emitted = await firstValueFrom(output$.pipe(take(takeCount), toArray()));
+    return { emitted, calls };
+}
+
+async function runGetCsrAttributesEpic(
+    action: UnknownAction,
+    getCsrGenerationAttributes: (args: any) => Observable<any> = () => of([]),
+    takeCount = 1,
+): Promise<{ emitted: UnknownAction[]; calls: any[] }> {
+    const epics = certificatesEpics as ((action$: any, state$: any, deps: any) => Observable<UnknownAction>)[];
+    const calls: any[] = [];
+    const deps = {
+        apiClients: {
+            certificates: {
+                getCsrGenerationAttributes: (args: any) => {
+                    calls.push(args);
+                    return getCsrGenerationAttributes(args);
+                },
+            },
+        },
+    };
+    const output$ = epics[GET_CSR_ATTRIBUTES_EPIC_INDEX](of(action), of({}) as any, deps as any);
+    const emitted = await firstValueFrom(output$.pipe(take(takeCount), toArray()));
+    return { emitted, calls };
+}
+
+async function runImportCertificatesEpic(
+    action: UnknownAction,
+    importCertificates: (args: any) => Observable<any>,
+    takeCount = 1,
+): Promise<{ emitted: UnknownAction[]; calls: any[] }> {
+    const epics = certificatesEpics as ((action$: any, state$: any, deps: any) => Observable<UnknownAction>)[];
+    const calls: any[] = [];
+    const deps = {
+        apiClients: {
+            certificates: {
+                importCertificates: (args: any) => {
+                    calls.push(args);
+                    return importCertificates(args);
+                },
+            },
+        },
+    };
+    const output$ = epics[IMPORT_CERTIFICATES_EPIC_INDEX](of(action), of({}) as any, deps as any);
+    const emitted = await firstValueFrom(output$.pipe(take(takeCount), toArray()));
+    return { emitted, calls };
+}
+
+async function runDownloadKeystoreEpic(
+    action: UnknownAction,
+    downloadKeystore: (args: any) => Observable<any>,
+    takeCount = 2,
+): Promise<{ emitted: UnknownAction[]; calls: any[]; opts: any[] }> {
+    const epics = certificatesEpics as ((action$: any, state$: any, deps: any) => Observable<UnknownAction>)[];
+    const calls: any[] = [];
+    const opts: any[] = [];
+    const deps = {
+        apiClients: {
+            certificates: {
+                downloadKeystore: (args: any, callOpts?: any) => {
+                    calls.push(args);
+                    opts.push(callOpts);
+                    return downloadKeystore(args);
+                },
+            },
+        },
+    };
+    const output$ = epics[DOWNLOAD_KEYSTORE_EPIC_INDEX](of(action), of({}) as any, deps as any);
+    const emitted = await firstValueFrom(output$.pipe(take(takeCount), toArray()));
+    return { emitted, calls, opts };
+}
+
+describe('certificates epics', () => {
+    const issueAction = certificatesActions.issueCertificate({
+        authorityUuid: 'auth-1',
+        raProfileUuid: 'ra-1',
+        signRequest: {} as any,
+    });
+
+    test('issueCertificate emits Success and redirect on success', async () => {
+        const emitted = await runEpic(ISSUE_EPIC_INDEX, issueAction, {
+            issueCertificate: () => of({ uuid: 'cert-1', certificateData: 'data' }),
+        });
+
+        expect(emitted).toHaveLength(2);
+        expect(emitted[0].type).toBe(certificatesActions.issueCertificateSuccess.type);
+        expect(emitted[1].type).toBe(appRedirectActions.redirect.type);
+    });
+
+    test('issueCertificate with an empty warning list still redirects', async () => {
+        const emitted = await runEpic(ISSUE_EPIC_INDEX, issueAction, {
+            issueCertificate: () => of({ uuid: 'cert-1', certificateData: '', requestAttributeWarnings: [] }),
+        });
+
+        expect(emitted).toHaveLength(2);
+        expect(emitted[1].type).toBe(appRedirectActions.redirect.type);
+    });
+
+    test('issueCertificate with lenient warnings emits Success carrying them and stays on the form', async () => {
+        const emitted = await runEpic(ISSUE_EPIC_INDEX, issueAction, {
+            issueCertificate: () => of({ uuid: 'cert-1', certificateData: '', requestAttributeWarnings: ['w1', 'w2'] }),
+        });
+
+        expect(emitted).toHaveLength(1);
+        expect(emitted[0].type).toBe(certificatesActions.issueCertificateSuccess.type);
+        expect((emitted[0] as any).payload).toMatchObject({ uuid: 'cert-1', requestAttributeWarnings: ['w1', 'w2'] });
+    });
+
+    test('issueCertificate 422 failure carries the validation-error list and suppresses the generic fetch error', async () => {
+        const emitted = await runEpic(ISSUE_EPIC_INDEX, issueAction, {
+            issueCertificate: () => throwError(() => ({ status: 422, response: ['e1', 'e2'] })),
+        });
+
+        expect(emitted).toHaveLength(1);
+        expect(emitted[0].type).toBe(certificatesActions.issueCertificateFailure.type);
+        expect((emitted[0] as any).payload.validationErrors).toEqual(['e1', 'e2']);
+    });
+
+    test('issueCertificate wrapped 400 policy failure carries the violation lines', async () => {
+        const message =
+            "Failed to submit certificate request: Uploaded certificate request does not satisfy the request-attribute policy of RA profile 'p' \nSubject RDN 'O' is not allowed by the request-attribute set";
+        const emitted = await runEpic(ISSUE_EPIC_INDEX, issueAction, {
+            issueCertificate: () => throwError(() => ({ status: 400, response: { message } })),
+        });
+
+        expect(emitted).toHaveLength(1);
+        expect((emitted[0] as any).payload.validationErrors).toEqual(["Subject RDN 'O' is not allowed by the request-attribute set"]);
+    });
+
+    test('issueCertificate generic failure emits Failure without validation errors and a fetch error', async () => {
+        const emitted = await runEpic(ISSUE_EPIC_INDEX, issueAction, {
+            issueCertificate: () => throwError(() => ({ status: 500, response: { message: 'boom' } })),
+        });
+
+        expect(emitted).toHaveLength(2);
+        expect(emitted[0].type).toBe(certificatesActions.issueCertificateFailure.type);
+        expect((emitted[0] as any).payload.validationErrors).toBeUndefined();
+        expect(emitted[1].type).toBe(appRedirectActions.fetchError.type);
+    });
+
+    const registerAction = certificatesActions.registerCertificate({
+        authorityUuid: 'auth-1',
+        raProfileUuid: 'ra-1',
+        registerRequest: { authorizationSecret: 'secret', attributes: [] },
+    });
+
+    test('registerCertificate success emits Success, redirect, and a success alert', async () => {
+        const { emitted, calls } = await runRegisterEpic(registerAction, () => of({ uuid: 'cert-1' }));
+
+        expect(calls[0]).toMatchObject({ authorityUuid: 'auth-1', raProfileUuid: 'ra-1' });
+        expect(emitted).toHaveLength(3);
+        expect(emitted[0].type).toBe(certificatesActions.registerCertificateSuccess.type);
+        expect((emitted[0] as any).payload.uuid).toBe('cert-1');
+        expect(emitted[1].type).toBe(appRedirectActions.redirect.type);
+        expect(emitted[2].type).toBe(alertActions.success.type);
+    });
+
+    test('registerCertificate 422 failure carries the validation-error list and suppresses the generic fetch error', async () => {
+        const { emitted } = await runRegisterEpic(registerAction, () => throwError(() => ({ status: 422, response: ['e1', 'e2'] })), 1);
+
+        expect(emitted).toHaveLength(1);
+        expect(emitted[0].type).toBe(certificatesActions.registerCertificateFailure.type);
+        expect((emitted[0] as any).payload.validationErrors).toEqual(['e1', 'e2']);
+    });
+
+    test('registerCertificate generic failure emits Failure without validation errors and a fetch error', async () => {
+        const { emitted } = await runRegisterEpic(
+            registerAction,
+            () => throwError(() => ({ status: 500, response: { message: 'boom' } })),
+            2,
+        );
+
+        expect(emitted).toHaveLength(2);
+        expect(emitted[0].type).toBe(certificatesActions.registerCertificateFailure.type);
+        expect((emitted[0] as any).payload.validationErrors).toBeUndefined();
+        expect(emitted[1].type).toBe(appRedirectActions.fetchError.type);
+    });
+
+    test('registerCertificate with inline errors emits only the Failure, carrying the Core message', async () => {
+        const inlineRegisterAction = certificatesActions.registerCertificate({
+            authorityUuid: 'auth-1',
+            raProfileUuid: 'ra-1',
+            registerRequest: { sourceCertificateUuid: 'source-1' },
+            inlineErrors: true,
+        });
+        const { emitted } = await runRegisterEpic(
+            inlineRegisterAction,
+            () => throwError(() => coreError(403, { message: 'Access denied' })),
+            2,
+        );
+
+        expect(emitted).toHaveLength(1);
+        expect(emitted[0].type).toBe(certificatesActions.registerCertificateFailure.type);
+        expect((emitted[0] as any).payload.error).toContain('Access denied');
+    });
+
+    test('registerCertificate with inline errors still reports an expired session', async () => {
+        const inlineRegisterAction = certificatesActions.registerCertificate({
+            authorityUuid: 'auth-1',
+            raProfileUuid: 'ra-1',
+            registerRequest: { sourceCertificateUuid: 'source-1' },
+            inlineErrors: true,
+        });
+        const { emitted } = await runRegisterEpic(inlineRegisterAction, () => throwError(() => coreError(401, 'Unauthorized')), 2);
+
+        expect(emitted.map((a) => a.type)).toEqual([
+            certificatesActions.registerCertificateFailure.type,
+            appRedirectActions.fetchError.type,
+        ]);
+    });
+
+    const renewAction = certificatesActions.renewCertificate({
+        authorityUuid: 'auth-1',
+        raProfileUuid: 'ra-1',
+        uuid: 'cert-1',
+        renewRequest: { authorizationSecret: 'wrong-secret' },
+    });
+
+    test('renewCertificate success emits Success and redirects to the successor', async () => {
+        const emitted = await runEpic(RENEW_EPIC_INDEX, renewAction, { renewCertificate: () => of({ uuid: 'successor-1' }) });
+
+        expect(emitted.map((a) => a.type)).toEqual([certificatesActions.renewCertificateSuccess.type, appRedirectActions.redirect.type]);
+    });
+
+    test('renewCertificate failure emits only the Failure so the dialog can show the Core message inline', async () => {
+        const emitted = await runEpic(RENEW_EPIC_INDEX, renewAction, {
+            renewCertificate: () => throwError(() => coreError(422, ['The certificate registration challenge is invalid.'])),
+        });
+
+        expect(emitted).toHaveLength(1);
+        expect(emitted[0].type).toBe(certificatesActions.renewCertificateFailure.type);
+        expect((emitted[0] as any).payload.error).toContain('The certificate registration challenge is invalid.');
+    });
+
+    const rekeyAction = certificatesActions.rekeyCertificate({
+        authorityUuid: 'auth-1',
+        raProfileUuid: 'ra-1',
+        uuid: 'cert-1',
+        rekey: { authorizationSecret: 'wrong-secret' },
+    });
+
+    test('rekeyCertificate failure emits only the Failure so the dialog can show the Core message inline', async () => {
+        const emitted = await runEpic(REKEY_EPIC_INDEX, rekeyAction, {
+            rekeyCertificate: () => throwError(() => coreError(422, ['The certificate registration challenge is required.'])),
+        });
+
+        expect(emitted).toHaveLength(1);
+        expect(emitted[0].type).toBe(certificatesActions.rekeyCertificateFailure.type);
+        expect((emitted[0] as any).payload.error).toContain('The certificate registration challenge is required.');
+    });
+
+    test('renewCertificate and rekeyCertificate still report an expired session', async () => {
+        const unauthorized = () => throwError(() => coreError(401, 'Unauthorized'));
+
+        const renewed = await runEpic(RENEW_EPIC_INDEX, renewAction, { renewCertificate: unauthorized });
+        const rekeyed = await runEpic(REKEY_EPIC_INDEX, rekeyAction, { rekeyCertificate: unauthorized });
+
+        expect(renewed.map((a) => a.type)).toEqual([certificatesActions.renewCertificateFailure.type, appRedirectActions.fetchError.type]);
+        expect(rekeyed.map((a) => a.type)).toEqual([certificatesActions.rekeyCertificateFailure.type, appRedirectActions.fetchError.type]);
+    });
+
+    const completeRegisteredFailureAction = certificatesActions.completeRegisteredCertificate({
+        authorityUuid: 'auth-1',
+        raProfileUuid: 'ra-1',
+        certificateUuid: 'cert-1',
+        request: 'BASE64CSR',
+        format: 'PKCS10' as any,
+        authorizationSecret: 'secret',
+        attributes: [],
+    });
+
+    test('completeRegisteredCertificate 422 failure carries the validation-error list for the inline panel', async () => {
+        const { emitted } = await runCompleteRegisteredEpic(
+            completeRegisteredFailureAction,
+            () => throwError(() => ({ status: 422, response: { message: 'challenge rejected' } })),
+            1,
+        );
+
+        expect(emitted).toHaveLength(1);
+        expect(emitted[0].type).toBe(certificatesActions.issueCertificateFailure.type);
+        expect((emitted[0] as any).payload.validationErrors).toEqual(['challenge rejected']);
+    });
+
+    test('completeRegisteredCertificate failure emits only the inline Failure — no toast, no detail refetch', async () => {
+        const { emitted } = await runCompleteRegisteredEpic(
+            completeRegisteredFailureAction,
+            () => throwError(() => ({ status: 500, response: { message: 'boom' } })),
+            1,
+        );
+
+        // The dialog renders the error inline and stays open, so it is the single source of truth: no
+        // global fetchError toast, and no getCertificateDetail refetch (which would unmount the dialog).
+        expect(emitted).toHaveLength(1);
+        expect(emitted[0].type).toBe(certificatesActions.issueCertificateFailure.type);
+        expect((emitted[0] as any).payload.validationErrors).toBeUndefined();
+        expect(emitted.some((a) => a.type === appRedirectActions.fetchError.type)).toBe(false);
+        expect(emitted.some((a) => a.type === certificatesActions.getCertificateDetail.type)).toBe(false);
+    });
+
+    test('completeRegisteredCertificate CSR-upload mode forwards request/format without key fields', async () => {
+        const { calls } = await runCompleteRegisteredEpic(
+            certificatesActions.completeRegisteredCertificate({
+                authorityUuid: 'auth-1',
+                raProfileUuid: 'ra-1',
+                certificateUuid: 'cert-1',
+                request: 'BASE64CSR',
+                format: 'PKCS10' as any,
+                authorizationSecret: 'secret',
+                attributes: [],
+            }),
+        );
+
+        expect(calls[0].clientCertificateIssueRequestDto).toEqual({
+            request: 'BASE64CSR',
+            format: 'PKCS10',
+            authorizationSecret: 'secret',
+            attributes: [],
+            tokenProfileUuid: undefined,
+            keyUuid: undefined,
+            signatureAttributes: undefined,
+            csrAttributes: undefined,
+        });
+    });
+
+    test('completeRegisteredCertificate existing-key mode forwards key + csrAttributes so the backend can generate the CSR from an empty request', async () => {
+        const { emitted, calls } = await runCompleteRegisteredEpic(
+            certificatesActions.completeRegisteredCertificate({
+                authorityUuid: 'auth-1',
+                raProfileUuid: 'ra-1',
+                certificateUuid: 'cert-1',
+                request: '',
+                authorizationSecret: 'secret',
+                attributes: [],
+                tokenProfileUuid: 'token-profile-uuid',
+                keyUuid: 'key-uuid',
+                signatureAttributes: [{ name: 'sig-attr', content: [{ data: 'v' }] } as any],
+                csrAttributes: [{ name: 'commonName', content: [{ data: 'example.com' }] } as any],
+            }),
+            () => of({ uuid: 'cert-1' }),
+        );
+
+        expect(calls[0].clientCertificateIssueRequestDto).toMatchObject({
+            request: '',
+            tokenProfileUuid: 'token-profile-uuid',
+            keyUuid: 'key-uuid',
+        });
+        expect(calls[0].clientCertificateIssueRequestDto.signatureAttributes).toEqual([{ name: 'sig-attr', content: [{ data: 'v' }] }]);
+        // The backend builds the CSR from these identity attributes, so they must reach the request.
+        expect(calls[0].clientCertificateIssueRequestDto.csrAttributes).toEqual([
+            { name: 'commonName', content: [{ data: 'example.com' }] },
+        ]);
+        expect(emitted[0].type).toBe(certificatesActions.issueCertificateSuccess.type);
+    });
+
+    test('associateCertificate successor relation sends selected cert as successor and emits Success keyed on current cert', async () => {
+        const { emitted, calls } = await runAssociateEpic(
+            certificatesActions.associateCertificate({ uuid: 'current-cert', certificateUuid: 'related-cert', relation: 'successor' }),
+        );
+        // selected cert is the successor, current cert is the predecessor → swap so {uuid}=successor, {certificateUuid}=predecessor
+        expect(calls[0]).toEqual({ uuid: 'related-cert', certificateUuid: 'current-cert' });
+        expect(emitted[0].type).toBe(certificatesActions.associateCertificateSuccess.type);
+        // refresh must target the certificate open in the UI
+        expect((emitted[0] as any).payload.uuid).toBe('current-cert');
+    });
+
+    test('associateCertificate predecessor relation sends selected cert as predecessor without swapping', async () => {
+        const { emitted, calls } = await runAssociateEpic(
+            certificatesActions.associateCertificate({ uuid: 'current-cert', certificateUuid: 'related-cert', relation: 'predecessor' }),
+        );
+        // selected cert is the predecessor, current cert is the successor → no swap
+        expect(calls[0]).toEqual({ uuid: 'current-cert', certificateUuid: 'related-cert' });
+        expect(emitted[0].type).toBe(certificatesActions.associateCertificateSuccess.type);
+        expect((emitted[0] as any).payload.uuid).toBe('current-cert');
+    });
+
+    test('associateCertificate failure emits Failure with extracted error and fetchError', async () => {
+        const { emitted } = await runAssociateEpic(
+            certificatesActions.associateCertificate({ uuid: 'current-cert', certificateUuid: 'related-cert', relation: 'successor' }),
+            () => throwError(() => new Error('boom')),
+            2,
+        );
+        expect(emitted[0].type).toBe(certificatesActions.associateCertificateFailure.type);
+        expect((emitted[0] as any).payload.error).toContain('boom');
+        expect(emitted[1].type).toBe(appRedirectActions.fetchError.type);
+    });
+
+    test('deassociateCertificate predecessor relation calls API without swapping uuids and emits Success', async () => {
+        const { emitted, calls } = await runDeassociateEpic(
+            certificatesActions.deassociateCertificate({ uuid: 'current-cert', certificateUuid: 'related-cert', relation: 'predecessor' }),
+        );
+        // current cert is the successor, related cert is the predecessor → no swap
+        expect(calls[0]).toEqual({ uuid: 'current-cert', certificateUuid: 'related-cert' });
+        expect(emitted[0].type).toBe(certificatesActions.deassociateCertificateSuccess.type);
+        expect((emitted[0] as any).payload.uuid).toBe('current-cert');
+    });
+
+    test('deassociateCertificate successor relation swaps uuids so the API can find the relation row', async () => {
+        const { emitted, calls } = await runDeassociateEpic(
+            certificatesActions.deassociateCertificate({ uuid: 'current-cert', certificateUuid: 'related-cert', relation: 'successor' }),
+        );
+        // current cert is the predecessor, related cert is the successor → swap so {uuid}=successor, {certificateUuid}=predecessor
+        expect(calls[0]).toEqual({ uuid: 'related-cert', certificateUuid: 'current-cert' });
+        expect(emitted[0].type).toBe(certificatesActions.deassociateCertificateSuccess.type);
+        expect((emitted[0] as any).payload.uuid).toBe('current-cert');
+    });
+
+    test('deassociateCertificate failure emits Failure with extracted error and fetchError', async () => {
+        const { emitted } = await runDeassociateEpic(
+            certificatesActions.deassociateCertificate({ uuid: 'current-cert', certificateUuid: 'related-cert', relation: 'successor' }),
+            () => throwError(() => new Error('boom')),
+            2,
+        );
+        expect(emitted[0].type).toBe(certificatesActions.deassociateCertificateFailure.type);
+        expect((emitted[0] as any).payload.error).toContain('boom');
+        expect(emitted[1].type).toBe(appRedirectActions.fetchError.type);
+    });
+
+    test('revokeCertificate success emits Success, alert, getCertificateDetail, getCertificateHistory', async () => {
+        const emitted = await runEpic(
+            REVOKE_EPIC_INDEX,
+            certificatesActions.revokeCertificate({
+                authorityUuid: 'auth-1',
+                raProfileUuid: 'ra-1',
+                uuid: 'cert-1',
+                revokeRequest: { reason: 'unspecified', attributes: [] } as any,
+            }),
+            {},
+            4,
+        );
+        expect(emitted[0].type).toBe(certificatesActions.revokeCertificateSuccess.type);
+        expect(emitted[1].type).toBe(alertActions.success.type);
+        expect(emitted[2].type).toBe(certificatesActions.getCertificateDetail.type);
+        expect(emitted[3].type).toBe(certificatesActions.getCertificateHistory.type);
+    });
+
+    test('revokeCertificate failure emits Failure, getCertificateDetail, fetchError', async () => {
+        const emitted = await runEpic(
+            REVOKE_EPIC_INDEX,
+            certificatesActions.revokeCertificate({
+                authorityUuid: 'auth-1',
+                raProfileUuid: 'ra-1',
+                uuid: 'cert-1',
+                revokeRequest: { reason: 'unspecified', attributes: [] } as any,
+            }),
+            { revokeCertificate: () => throwError(() => new Error('boom')) },
+            3,
+        );
+        expect(emitted[0].type).toBe(certificatesActions.revokeCertificateFailure.type);
+        expect(emitted[1].type).toBe(certificatesActions.getCertificateDetail.type);
+        expect(emitted[2].type).toBe(appRedirectActions.fetchError.type);
+    });
+
+    test('manuallyIssueCertificate success emits Success, alert, getCertificateDetail, getCertificateHistory', async () => {
+        const emitted = await runEpic(
+            MANUALLY_ISSUE_EPIC_INDEX,
+            certificatesActions.manuallyIssueCertificate({
+                authorityUuid: 'auth-1',
+                raProfileUuid: 'ra-1',
+                uuid: 'cert-1',
+                uploadRequest: { certificate: 'BASE64', customAttributes: [] } as any,
+            }),
+            {},
+            4,
+        );
+        expect(emitted[0].type).toBe(certificatesActions.manuallyIssueCertificateSuccess.type);
+        expect((emitted[0] as any).payload.uuid).toBe('cert-1');
+        expect(emitted[1].type).toBe(alertActions.success.type);
+        expect(emitted[2].type).toBe(certificatesActions.getCertificateDetail.type);
+        expect((emitted[2] as any).payload.uuid).toBe('cert-1');
+        expect(emitted[3].type).toBe(certificatesActions.getCertificateHistory.type);
+    });
+
+    test('manuallyIssueCertificate failure emits Failure with extracted error, getCertificateDetail, fetchError', async () => {
+        const emitted = await runEpic(
+            MANUALLY_ISSUE_EPIC_INDEX,
+            certificatesActions.manuallyIssueCertificate({
+                authorityUuid: 'auth-1',
+                raProfileUuid: 'ra-1',
+                uuid: 'cert-1',
+                uploadRequest: { certificate: 'BASE64', customAttributes: [] } as any,
+            }),
+            { manuallyIssueCertificate: () => throwError(() => new Error('boom')) },
+            3,
+        );
+        expect(emitted[0].type).toBe(certificatesActions.manuallyIssueCertificateFailure.type);
+        expect((emitted[0] as any).payload.uuid).toBe('cert-1');
+        expect(emitted[1].type).toBe(certificatesActions.getCertificateDetail.type);
+        expect(emitted[2].type).toBe(appRedirectActions.fetchError.type);
+    });
+
+    test('manuallyConfirmRevoke success emits Success, alert, getCertificateDetail, getCertificateHistory', async () => {
+        const emitted = await runEpic(
+            MANUALLY_CONFIRM_REVOKE_EPIC_INDEX,
+            certificatesActions.manuallyConfirmRevoke({ authorityUuid: 'auth-1', raProfileUuid: 'ra-1', uuid: 'cert-1' }),
+            {},
+            4,
+        );
+        expect(emitted[0].type).toBe(certificatesActions.manuallyConfirmRevokeSuccess.type);
+        expect((emitted[0] as any).payload.uuid).toBe('cert-1');
+        expect(emitted[1].type).toBe(alertActions.success.type);
+        expect(emitted[2].type).toBe(certificatesActions.getCertificateDetail.type);
+        expect(emitted[3].type).toBe(certificatesActions.getCertificateHistory.type);
+    });
+
+    test('manuallyConfirmRevoke failure emits Failure, getCertificateDetail, fetchError', async () => {
+        const emitted = await runEpic(
+            MANUALLY_CONFIRM_REVOKE_EPIC_INDEX,
+            certificatesActions.manuallyConfirmRevoke({ authorityUuid: 'auth-1', raProfileUuid: 'ra-1', uuid: 'cert-1' }),
+            { manuallyConfirmRevoke: () => throwError(() => new Error('boom')) },
+            3,
+        );
+        expect(emitted[0].type).toBe(certificatesActions.manuallyConfirmRevokeFailure.type);
+        expect(emitted[1].type).toBe(certificatesActions.getCertificateDetail.type);
+        expect(emitted[2].type).toBe(appRedirectActions.fetchError.type);
+    });
+
+    test('cancelPendingCertificateOperation success emits Success, alert, getCertificateDetail, getCertificateHistory', async () => {
+        const emitted = await runEpic(
+            CANCEL_PENDING_EPIC_INDEX,
+            certificatesActions.cancelPendingCertificateOperation({
+                authorityUuid: 'auth-1',
+                raProfileUuid: 'ra-1',
+                uuid: 'cert-1',
+                reason: 'no-longer-needed',
+            }),
+            {},
+            4,
+        );
+        expect(emitted[0].type).toBe(certificatesActions.cancelPendingCertificateOperationSuccess.type);
+        expect((emitted[0] as any).payload.uuid).toBe('cert-1');
+        expect(emitted[1].type).toBe(alertActions.success.type);
+        expect(emitted[2].type).toBe(certificatesActions.getCertificateDetail.type);
+        expect(emitted[3].type).toBe(certificatesActions.getCertificateHistory.type);
+    });
+
+    test('cancelPendingCertificateOperation failure emits Failure, getCertificateDetail, fetchError', async () => {
+        const emitted = await runEpic(
+            CANCEL_PENDING_EPIC_INDEX,
+            certificatesActions.cancelPendingCertificateOperation({
+                authorityUuid: 'auth-1',
+                raProfileUuid: 'ra-1',
+                uuid: 'cert-1',
+                reason: undefined,
+            }),
+            { cancelPendingCertificateOperation: () => throwError(() => new Error('boom')) },
+            3,
+        );
+        expect(emitted[0].type).toBe(certificatesActions.cancelPendingCertificateOperationFailure.type);
+        expect(emitted[1].type).toBe(certificatesActions.getCertificateDetail.type);
+        expect(emitted[2].type).toBe(appRedirectActions.fetchError.type);
+    });
+
+    test('uploadCertificate success emits Success and an alert, and leaves the refetch to the page', async () => {
+        const emitted = await runUploadEpic(
+            certificatesActions.uploadCertificate({ certificate: 'BASE64', customAttributes: [] } as any),
+            {},
+            2,
+        );
+        expect(emitted[0].type).toBe(certificatesActions.uploadCertificateSuccess.type);
+        expect(emitted[1].type).toBe(alertActions.success.type);
+        expect(emitted.map((emittedAction) => emittedAction.type)).not.toContain(certificatesActions.listCertificates.type);
+    });
+
+    test('uploadCertificate failure emits Failure with extracted error and fetchError', async () => {
+        const emitted = await runUploadEpic(
+            certificatesActions.uploadCertificate({ certificate: 'BASE64', customAttributes: [] } as any),
+            { uploadAsync: () => throwError(() => new Error('boom')) },
+            2,
+        );
+        expect(emitted[0].type).toBe(certificatesActions.uploadCertificateFailure.type);
+        expect((emitted[0] as any).payload.error).toContain('boom');
+        expect(emitted[1].type).toBe(appRedirectActions.fetchError.type);
+    });
+
+    describe('bulkUpdateRaProfile', () => {
+        function runBulkUpdateRaProfileEpic(certificateUuids: string[]): { action$: Subject<UnknownAction>; emitted: UnknownAction[] } {
+            const epics = certificatesEpics as ((action$: any, state$: any, deps: any) => Observable<UnknownAction>)[];
+            const action$ = new Subject<UnknownAction>();
+            const deps = {
+                apiClients: {
+                    certificates: { bulkUpdateCertificateObjects: () => of(undefined) },
+                },
+            };
+            const emitted: UnknownAction[] = [];
+            epics[BULK_UPDATE_RA_PROFILE_EPIC_INDEX](action$, of({}) as any, deps as any).subscribe((action) => emitted.push(action));
+
+            action$.next(
+                certificatesActions.bulkUpdateRaProfile({
+                    authorityUuid: 'auth-1',
+                    raProfileRequest: { certificateUuids, raProfileUuid: 'ra-new', filters: [] } as any,
+                }),
+            );
+            return { action$, emitted };
+        }
+
+        test('reports the update as initiated once the backend accepts it, without waiting for a listing', () => {
+            const { emitted } = runBulkUpdateRaProfileEpic(['c1', 'c2']);
+
+            expect(emitted.map((action) => action.type)).toEqual([
+                certificatesActions.bulkUpdateRaProfileSuccess.type,
+                alertActions.success.type,
+            ]);
+            expect((emitted[0] as any).payload.uuids).toEqual(['c1', 'c2']);
+            expect((emitted[1] as any).payload).toContain('initiated');
+            expect((emitted[1] as any).payload).toContain('notifications');
+        });
+
+        test('does not judge the outcome from a listing read before the background update committed', () => {
+            const { action$, emitted } = runBulkUpdateRaProfileEpic(['c1']);
+            const emittedBeforeListing = emitted.length;
+
+            action$.next(certificatesActions.listCertificatesSuccess([{ uuid: 'c1', raProfile: { uuid: 'ra-old' } }] as any));
+
+            expect(emitted).toHaveLength(emittedBeforeListing);
+            expect(emitted.map((action) => action.type)).not.toContain(alertActions.error.type);
+        });
+
+        test('leaves the refetch to the page rather than replaying a captured request', () => {
+            const { emitted } = runBulkUpdateRaProfileEpic(['c1']);
+
+            expect(emitted.map((action) => action.type)).not.toContain(certificatesActions.listCertificates.type);
+        });
+
+        test('emits failure action when PATCH itself fails', async () => {
+            const epics = certificatesEpics as ((action$: any, state$: any, deps: any) => Observable<UnknownAction>)[];
+            const action$ = new Subject<UnknownAction>();
+            const deps = {
+                apiClients: {
+                    certificates: { bulkUpdateCertificateObjects: () => throwError(() => new Error('boom')) },
+                },
+            };
+            const output$ = epics[BULK_UPDATE_RA_PROFILE_EPIC_INDEX](action$, of({}) as any, deps as any);
+            const collected = firstValueFrom(output$.pipe(take(2), toArray()));
+
+            action$.next(
+                certificatesActions.bulkUpdateRaProfile({
+                    authorityUuid: 'auth-1',
+                    raProfileRequest: { certificateUuids: ['c1'], raProfileUuid: 'ra-new', filters: [] } as any,
+                }),
+            );
+
+            const emitted = await collected;
+            expect(emitted[0].type).toBe(certificatesActions.bulkUpdateRaProfileFailure.type);
+            expect((emitted[0] as any).payload.error).toContain('boom');
+            expect(emitted[1].type).toBe(appRedirectActions.fetchError.type);
+        });
+    });
+
+    describe('getRegisterAttributes', () => {
+        test('forwards authorityUuid and raProfileUuid to the client and maps descriptors on success', async () => {
+            const { emitted, calls } = await runGetRegisterAttributesEpic(
+                certificatesActions.getRegisterAttributes({ raProfileUuid: 'ra-1', authorityUuid: 'auth-1' }),
+                () => of([{ uuid: 'reg-attr-1' }]),
+            );
+
+            expect(calls).toEqual([{ authorityUuid: 'auth-1', raProfileUuid: 'ra-1' }]);
+            expect(emitted[0].type).toBe(certificatesActions.getRegisterAttributesSuccess.type);
+            expect((emitted[0] as any).payload.raProfileUuid).toBe('ra-1');
+            expect((emitted[0] as any).payload.registerAttributes).toEqual([{ uuid: 'reg-attr-1' }]);
+        });
+
+        test('emits failure action and fetchError redirect when the client fails', async () => {
+            const { emitted } = await runGetRegisterAttributesEpic(
+                certificatesActions.getRegisterAttributes({ raProfileUuid: 'ra-1', authorityUuid: 'auth-1' }),
+                () => throwError(() => new Error('boom')),
+                2,
+            );
+
+            expect(emitted[0].type).toBe(certificatesActions.getRegisterAttributesFailure.type);
+            expect((emitted[0] as any).payload.error).toContain('boom');
+            // The reducer needs the profile uuid to drop that profile's now-stale descriptors.
+            expect((emitted[0] as any).payload.raProfileUuid).toBe('ra-1');
+            expect(emitted[1].type).toBe(appRedirectActions.fetchError.type);
+        });
+    });
+
+    describe('getCsrAttributes', () => {
+        test('forwards raProfileUuid to the client and maps descriptors on success', async () => {
+            const { emitted, calls } = await runGetCsrAttributesEpic(certificatesActions.getCsrAttributes({ raProfileUuid: 'ra-1' }), () =>
+                of([{ uuid: 'csr-attr-1' }]),
+            );
+
+            expect(calls).toEqual([{ raProfileUuid: 'ra-1' }]);
+            expect(emitted[0].type).toBe(certificatesActions.getCsrAttributesSuccess.type);
+            expect((emitted[0] as any).payload.csrAttributes).toEqual([{ uuid: 'csr-attr-1' }]);
+        });
+
+        test('emits failure action and fetchError redirect when the client fails', async () => {
+            const { emitted } = await runGetCsrAttributesEpic(
+                certificatesActions.getCsrAttributes({ raProfileUuid: 'ra-1' }),
+                () => throwError(() => new Error('boom')),
+                2,
+            );
+
+            expect(emitted[0].type).toBe(certificatesActions.getCsrAttributesFailure.type);
+            expect((emitted[0] as any).payload.error).toContain('boom');
+            expect(emitted[1].type).toBe(appRedirectActions.fetchError.type);
+        });
+
+        test('a profile whose authority connector serves no request schema resolves to the platform default set without failing', async () => {
+            const epics = certificatesEpics as ((action$: any, state$: any, deps: any) => Observable<UnknownAction>)[];
+            const platformDefaultSet = [{ uuid: 'platform-cn', name: 'commonName' }];
+            const deps = {
+                apiClients: {
+                    certificates: { getCsrGenerationAttributes: () => of(platformDefaultSet) },
+                },
+            };
+
+            const output$ = epics[GET_CSR_ATTRIBUTES_EPIC_INDEX](
+                of(certificatesActions.getCsrAttributes({ raProfileUuid: 'ra-no-connector' })),
+                of({}) as any,
+                deps as any,
+            );
+            const emitted = await firstValueFrom(output$.pipe(toArray()));
+
+            expect(emitted.map((a) => a.type)).toEqual([certificatesActions.getCsrAttributesSuccess.type]);
+            expect((emitted[0] as any).payload.csrAttributes).toEqual(platformDefaultSet);
+        });
+
+        test('switching RA Profiles refetches, and the earlier in-flight set is dropped so the newly selected profile wins', async () => {
+            const epics = certificatesEpics as ((action$: any, state$: any, deps: any) => Observable<UnknownAction>)[];
+            const action$ = new Subject<UnknownAction>();
+            const responses: Record<string, Subject<any>> = { 'ra-1': new Subject(), 'ra-2': new Subject() };
+            const requested: string[] = [];
+            const deps = {
+                apiClients: {
+                    certificates: {
+                        getCsrGenerationAttributes: ({ raProfileUuid }: { raProfileUuid: string }) => {
+                            requested.push(raProfileUuid);
+                            return responses[raProfileUuid];
+                        },
+                    },
+                },
+            };
+
+            const output$ = epics[GET_CSR_ATTRIBUTES_EPIC_INDEX](action$, of({}) as any, deps as any);
+            const emitted: UnknownAction[] = [];
+            const subscription = output$.subscribe((action) => emitted.push(action));
+
+            action$.next(certificatesActions.getCsrAttributes({ raProfileUuid: 'ra-1' }));
+            action$.next(certificatesActions.getCsrAttributes({ raProfileUuid: 'ra-2' }));
+            responses['ra-2'].next([{ uuid: 'ra-2-connector-attr' }]);
+            responses['ra-2'].complete();
+            // The first profile's response arriving late must not replace the second profile's set.
+            responses['ra-1'].next([{ uuid: 'ra-1-attr' }]);
+            responses['ra-1'].complete();
+
+            expect(requested).toEqual(['ra-1', 'ra-2']);
+            expect(emitted.map((a) => a.type)).toEqual([certificatesActions.getCsrAttributesSuccess.type]);
+            expect((emitted[0] as any).payload.csrAttributes).toEqual([{ uuid: 'ra-2-connector-attr' }]);
+            subscription.unsubscribe();
+        });
+
+        test('cancels the in-flight fetch when the RA Profile is cleared before the response resolves', async () => {
+            const epics = certificatesEpics as ((action$: any, state$: any, deps: any) => Observable<UnknownAction>)[];
+            const action$ = new Subject<UnknownAction>();
+            const response$ = new Subject<any>();
+            const deps = {
+                apiClients: {
+                    certificates: { getCsrGenerationAttributes: () => response$ },
+                },
+            };
+
+            const output$ = epics[GET_CSR_ATTRIBUTES_EPIC_INDEX](action$, of({}) as any, deps as any);
+            const emitted: UnknownAction[] = [];
+            const subscription = output$.subscribe((action) => emitted.push(action));
+
+            action$.next(certificatesActions.getCsrAttributes({ raProfileUuid: 'ra-1' }));
+            action$.next(certificatesActions.clearCsrAttributes());
+            // A late response must be ignored now that the fetch has been unsubscribed.
+            response$.next([{ uuid: 'csr-attr-1' }]);
+            response$.complete();
+
+            await Promise.resolve();
+
+            expect(emitted).toEqual([]);
+            subscription.unsubscribe();
+        });
+    });
+
+    describe('getRenewAttributes', () => {
+        const action = certificatesActions.getRenewAttributes({ raProfileUuid: 'ra-1', authorityUuid: 'auth-1' });
+
+        test('reads the renew schema of the RA profile and maps its descriptors', async () => {
+            const { emitted, calls } = await runSchemaEpic(GET_RENEW_ATTRIBUTES_EPIC_INDEX, 'listRenewCertificateAttributes', action, () =>
+                of([{ uuid: 'renew-attr-1' }]),
+            );
+
+            expect(calls).toEqual([{ authorityUuid: 'auth-1', raProfileUuid: 'ra-1' }]);
+            expect(emitted).toEqual([
+                certificatesActions.getRenewAttributesSuccess({ renewAttributes: [{ uuid: 'renew-attr-1' }] as any }),
+            ]);
+        });
+
+        test('an absent schema (404) is a failure without a toast', async () => {
+            const { emitted } = await runSchemaEpic(
+                GET_RENEW_ATTRIBUTES_EPIC_INDEX,
+                'listRenewCertificateAttributes',
+                action,
+                () => throwError(() => ({ status: 404, response: { message: 'connector unavailable' } })),
+                2,
+            );
+
+            expect(emitted).toHaveLength(1);
+            expect(emitted[0].type).toBe(certificatesActions.getRenewAttributesFailure.type);
+        });
+
+        test('any other failure is reported through a toast', async () => {
+            const { emitted } = await runSchemaEpic(
+                GET_RENEW_ATTRIBUTES_EPIC_INDEX,
+                'listRenewCertificateAttributes',
+                action,
+                () => throwError(() => new Error('boom')),
+                2,
+            );
+
+            expect(emitted[0].type).toBe(certificatesActions.getRenewAttributesFailure.type);
+            expect((emitted[0] as any).payload.error).toContain('boom');
+            expect(emitted[1].type).toBe(appRedirectActions.fetchError.type);
+        });
+
+        test('closing the dialog before the answer drops it, so no schema or toast arrives for a dialog that is gone', async () => {
+            const epics = certificatesEpics as ((action$: any, state$: any, deps: any) => Observable<UnknownAction>)[];
+            const actions$ = new Subject<UnknownAction>();
+            const answer$ = new Subject<any>();
+            const deps = { apiClients: { clientOperations: { listRenewCertificateAttributes: () => answer$ } } };
+            const emitted: UnknownAction[] = [];
+            epics[GET_RENEW_ATTRIBUTES_EPIC_INDEX](actions$, of({}) as any, deps as any).subscribe((a) => emitted.push(a));
+
+            actions$.next(action);
+            actions$.next(certificatesActions.clearRenewAttributes());
+            answer$.error(new Error('late failure'));
+
+            expect(emitted).toEqual([]);
+        });
+    });
+
+    describe('getIdentifyAttributes', () => {
+        const action = certificatesActions.getIdentifyAttributes({ raProfileUuid: 'ra-2', authorityUuid: 'auth-1' });
+
+        test('reads the identify schema of the RA profile and maps its descriptors', async () => {
+            const { emitted, calls } = await runSchemaEpic(
+                GET_IDENTIFY_ATTRIBUTES_EPIC_INDEX,
+                'listIdentifyCertificateAttributes',
+                action,
+                () => of([{ uuid: 'identify-attr-1' }]),
+            );
+
+            expect(calls).toEqual([{ authorityUuid: 'auth-1', raProfileUuid: 'ra-2' }]);
+            expect(emitted).toEqual([
+                certificatesActions.getIdentifyAttributesSuccess({ identifyAttributes: [{ uuid: 'identify-attr-1' }] as any }),
+            ]);
+        });
+
+        test('an absent schema (404) is a failure without a toast', async () => {
+            const { emitted } = await runSchemaEpic(
+                GET_IDENTIFY_ATTRIBUTES_EPIC_INDEX,
+                'listIdentifyCertificateAttributes',
+                action,
+                () => throwError(() => ({ status: 404, response: { message: 'connector unavailable' } })),
+                2,
+            );
+
+            expect(emitted).toHaveLength(1);
+            expect(emitted[0].type).toBe(certificatesActions.getIdentifyAttributesFailure.type);
+        });
+
+        test('any other failure is reported through a toast', async () => {
+            const { emitted } = await runSchemaEpic(
+                GET_IDENTIFY_ATTRIBUTES_EPIC_INDEX,
+                'listIdentifyCertificateAttributes',
+                action,
+                () => throwError(() => new Error('boom')),
+                2,
+            );
+
+            expect(emitted[0].type).toBe(certificatesActions.getIdentifyAttributesFailure.type);
+            expect(emitted[1].type).toBe(appRedirectActions.fetchError.type);
+        });
+
+        test('a clear that arrives before the answer drops it, so a stale schema never lands on a newer profile', async () => {
+            const epics = certificatesEpics as ((action$: any, state$: any, deps: any) => Observable<UnknownAction>)[];
+            const actions$ = new Subject<UnknownAction>();
+            const answer$ = new Subject<any>();
+            const deps = { apiClients: { clientOperations: { listIdentifyCertificateAttributes: () => answer$ } } };
+            const emitted: UnknownAction[] = [];
+            epics[GET_IDENTIFY_ATTRIBUTES_EPIC_INDEX](actions$, of({}) as any, deps as any).subscribe((a) => emitted.push(a));
+
+            actions$.next(action);
+            actions$.next(certificatesActions.clearIdentifyAttributes());
+            answer$.next([{ uuid: 'late' }]);
+            answer$.complete();
+
+            expect(emitted).toEqual([]);
+        });
+    });
+
+    describe('updateRaProfile', () => {
+        const runUpdateRaProfile = (getRaProfile: () => Observable<unknown>) => {
+            const epics = certificatesEpics as ((action$: any, state$: any, deps: any) => Observable<UnknownAction>)[];
+            const deps = {
+                apiClients: {
+                    certificates: { updateCertificateObjects: () => of(undefined) },
+                    raProfiles: { getRaProfile },
+                },
+            };
+            const action = certificatesActions.updateRaProfile({
+                uuid: 'cert-1',
+                updateRaProfileRequest: { raProfileUuid: 'ra-2', attributes: [] },
+                authorityUuid: 'auth-2',
+            });
+            return firstValueFrom(epics[UPDATE_RA_PROFILE_EPIC_INDEX](of(action), of({}) as any, deps as any).pipe(toArray()));
+        };
+
+        test('re-reads the certificate after the switch, since core replaces its identify values and metadata', async () => {
+            const emitted = await runUpdateRaProfile(() =>
+                of({ uuid: 'ra-2', name: 'RA Two', enabled: true, authorityInstanceUuid: 'auth-2' }),
+            );
+
+            expect(emitted.map((a) => a.type)).toEqual([
+                certificatesActions.updateRaProfileSuccess.type,
+                certificatesActions.getCertificateHistory.type,
+                certificatesActions.getCertificateDetail.type,
+            ]);
+            expect(emitted[2]).toEqual(certificatesActions.getCertificateDetail({ uuid: 'cert-1' }));
+        });
+
+        test('still re-reads the certificate when the profile lookup fails, since the switch itself went through', async () => {
+            const emitted = await runUpdateRaProfile(() => throwError(() => new Error('lookup failed')));
+
+            expect(emitted.map((a) => a.type)).toEqual([
+                certificatesActions.updateRaProfileFailure.type,
+                appRedirectActions.fetchError.type,
+                certificatesActions.getCertificateDetail.type,
+            ]);
+        });
+    });
+
+    describe('importCertificates', () => {
+        const certificateImportRequestDto = {
+            file: 'ZmlsZQ==',
+            entries: [{ entryReference: 'a'.repeat(64) }],
+        };
+        const importAction = certificatesActions.importCertificates({ certificateImportRequestDto } as any);
+
+        test('importCertificates emits the success with results', async () => {
+            const results = [
+                { entryReference: 'a'.repeat(64), kind: InspectedEntryKind.Certificate, imported: true, certificateUuid: 'cert-1' },
+            ];
+            const { emitted, calls } = await runImportCertificatesEpic(importAction, () => of({ results }));
+
+            expect(calls[0]).toEqual({ certificateImportRequestDto });
+            expect(emitted).toEqual([certificatesActions.importCertificatesSuccess({ results })]);
+        });
+
+        test('importCertificates failure emits Failure and fetchError, named for certificates and keys', async () => {
+            const { emitted } = await runImportCertificatesEpic(importAction, () => throwError(() => new Error('boom')), 2);
+
+            expect(emitted[0].type).toBe(certificatesActions.importCertificatesFailure.type);
+            expect((emitted[0] as any).payload.error).toContain('boom');
+            expect((emitted[0] as any).payload.error).toContain('Failed to import certificates and keys');
+            expect(emitted[1].type).toBe(appRedirectActions.fetchError.type);
+            expect((emitted[1] as any).payload.message).toBe('Failed to import certificates and keys');
+        });
+    });
+
+    describe('downloadKeystore', () => {
+        const uuid = 'cert-1';
+        const certificateKeystoreRequestDto = { passphrase: 'a-very-long-passphrase' };
+        const downloadAction = certificatesActions.downloadKeystore({ uuid, certificateKeystoreRequestDto, fallbackName: 'fallback.p12' });
+
+        test('requests a raw blob response, saves it under the header name and emits success with an alert', async () => {
+            const blob = new Blob(['bytes']);
+            const { emitted, calls, opts } = await runDownloadKeystoreEpic(downloadAction, () =>
+                of({ response: blob, responseHeaders: { 'content-disposition': 'attachment; filename="web-01.p12"' } }),
+            );
+
+            expect(calls[0]).toEqual({ uuid, certificateKeystoreRequestDto });
+            expect(opts[0]).toEqual({ responseOpts: { response: 'raw' } });
+            expect(triggerBlobDownload).toHaveBeenCalledWith(blob, 'web-01.p12');
+            expect(emitted[0].type).toBe(certificatesActions.downloadKeystoreSuccess.type);
+            expect(emitted[1]).toEqual(alertActions.success('Certificate downloaded with its private key.'));
+        });
+
+        test('with no content-disposition, saves as fallbackName', async () => {
+            const blob = new Blob(['bytes']);
+            await runDownloadKeystoreEpic(downloadAction, () => of({ response: blob, responseHeaders: {} }));
+
+            expect(triggerBlobDownload).toHaveBeenCalledWith(blob, 'fallback.p12');
+        });
+
+        test('failure emits Failure and fetchError', async () => {
+            const { emitted } = await runDownloadKeystoreEpic(downloadAction, () => throwError(() => new Error('boom')));
+
+            expect(emitted[0].type).toBe(certificatesActions.downloadKeystoreFailure.type);
+            expect((emitted[0] as any).payload.error).toContain('boom');
+            expect(emitted[1].type).toBe(appRedirectActions.fetchError.type);
+        });
+
+        test.each([
+            ['a string array', '["refused because the profile does not export RSA keys"]'],
+            ['a message', '{"message":"refused because the profile does not export RSA keys"}'],
+        ])("reads Core's refusal from a blob body holding %s", async (_name, body) => {
+            const refusal = new AjaxError(
+                'ajax error 422',
+                { status: 422, responseType: 'blob', response: new Blob([body]) } as never,
+                {} as never,
+            );
+            const message =
+                'Failed to download the certificate with its private key (422): refused because the profile does not export RSA keys';
+
+            const { emitted } = await runDownloadKeystoreEpic(downloadAction, () => throwError(() => refusal));
+
+            expect(emitted[0]).toEqual(certificatesActions.downloadKeystoreFailure({ error: message }));
+            const { error, message: headline } = (emitted[1] as ReturnType<typeof appRedirectActions.fetchError>).payload;
+            expect(extractError(error as AjaxError, headline)).toBe(message);
+        });
+    });
+
+    describe('bulkDelete re-reads the list until the deleted certificates are gone', () => {
+        beforeEach(() => {
+            vi.useFakeTimers();
+        });
+
+        afterEach(() => {
+            vi.useRealTimers();
+        });
+
+        function startBulkDelete(
+            uuids: string[],
+            bulkDeleteCertificate: () => Observable<unknown> = () => of({ status: 'SUCCESS' }),
+            checkedRows: string[] = [],
+        ) {
+            const epics = certificatesEpics as ((action$: any, state$: any, deps: any) => Observable<UnknownAction>)[];
+            const action$ = new Subject<UnknownAction>();
+            const deps = { apiClients: { certificates: { bulkDeleteCertificate } } };
+            const emitted: UnknownAction[] = [];
+            let completed = false;
+            const state$ = { value: { pagings: { pagings: [{ entity: EntityType.CERTIFICATE, paging: { checkedRows } }] } } };
+            const subscription = epics[BULK_DELETE_EPIC_INDEX](action$, state$ as any, deps as any).subscribe({
+                next: (action) => emitted.push(action),
+                complete: () => {
+                    completed = true;
+                },
+            });
+
+            action$.next(certificatesActions.bulkDelete({ uuids, filters: [] }));
+
+            return {
+                emitted,
+                isCompleted: () => completed,
+                listed: (listedUuids: string[]) =>
+                    action$.next(certificatesActions.listCertificatesSuccess(listedUuids.map((uuid) => ({ uuid })) as any)),
+                next: (action: UnknownAction) => action$.next(action),
+                complete: () => action$.complete(),
+                unsubscribe: () => subscription.unsubscribe(),
+            };
+        }
+
+        const refreshes = (emitted: UnknownAction[]) =>
+            emitted.filter((action) => action.type === certificatesActions.refreshListInBackground.type).length;
+
+        test('reports the initiated deletion through the success action', () => {
+            const run = startBulkDelete(['c1', 'c2']);
+
+            expect(run.emitted.map((action) => action.type)).toEqual([
+                certificatesActions.bulkDeleteSuccess.type,
+                alertActions.success.type,
+            ]);
+            run.unsubscribe();
+        });
+
+        test('asks for another read a second after a listing still shows a deleted certificate', async () => {
+            const run = startBulkDelete(['c1', 'c2']);
+
+            run.listed(['c1', 'c2', 'c3']);
+            await vi.advanceTimersByTimeAsync(999);
+            expect(refreshes(run.emitted)).toBe(0);
+
+            await vi.advanceTimersByTimeAsync(1);
+            expect(refreshes(run.emitted)).toBe(1);
+            run.unsubscribe();
+        });
+
+        test('doubles the wait before each further read', async () => {
+            const run = startBulkDelete(['c1', 'c2']);
+
+            run.listed(['c1', 'c2']);
+            await vi.advanceTimersByTimeAsync(1000);
+            run.listed(['c2']);
+            await vi.advanceTimersByTimeAsync(1999);
+            expect(refreshes(run.emitted)).toBe(1);
+
+            await vi.advanceTimersByTimeAsync(1);
+            expect(refreshes(run.emitted)).toBe(2);
+            run.unsubscribe();
+        });
+
+        test('stops once a listing no longer shows any deleted certificate', async () => {
+            const run = startBulkDelete(['c1', 'c2']);
+
+            run.listed(['c3']);
+            run.listed(['c1']);
+            await vi.advanceTimersByTimeAsync(60_000);
+
+            expect(refreshes(run.emitted)).toBe(0);
+            run.complete();
+            expect(run.isCompleted()).toBe(true);
+        });
+
+        test('drops the pending read when a clean listing arrives before it', async () => {
+            const run = startBulkDelete(['c1']);
+
+            run.listed(['c1']);
+            run.listed(['c3']);
+            await vi.advanceTimersByTimeAsync(60_000);
+
+            expect(refreshes(run.emitted)).toBe(0);
+            run.unsubscribe();
+        });
+
+        test('reads at most five more times', async () => {
+            const run = startBulkDelete(['c1']);
+
+            for (let read = 0; read < 8; read++) {
+                run.listed(['c1']);
+                await vi.advanceTimersByTimeAsync(1000 * 2 ** read);
+            }
+
+            expect(refreshes(run.emitted)).toBe(5);
+            run.unsubscribe();
+        });
+
+        const stillListedAlert = alertActions.info(
+            'Some certificates selected for deletion are still listed. Refresh the list later to see whether the deletion has finished.',
+        );
+
+        async function exhaustReads(run: ReturnType<typeof startBulkDelete>, uuid: string) {
+            for (let read = 0; read <= 5; read++) {
+                run.listed([uuid]);
+                await vi.advanceTimersByTimeAsync(1000 * 2 ** read);
+            }
+        }
+
+        test('tells the user when the last read still lists a deleted certificate', async () => {
+            const run = startBulkDelete(['c1']);
+
+            await exhaustReads(run, 'c1');
+
+            expect(run.emitted.filter((action) => action.type === alertActions.info.type)).toEqual([stillListedAlert]);
+            run.unsubscribe();
+        });
+
+        test('ends the watch once it has told the user', async () => {
+            const run = startBulkDelete(['c1']);
+
+            await exhaustReads(run, 'c1');
+            run.listed(['c1']);
+            await vi.advanceTimersByTimeAsync(60_000);
+
+            expect(run.emitted.filter((action) => action.type === alertActions.info.type)).toHaveLength(1);
+            run.complete();
+            expect(run.isCompleted()).toBe(true);
+        });
+
+        test('stays quiet when the last read no longer lists a deleted certificate', async () => {
+            const run = startBulkDelete(['c1']);
+
+            for (let read = 0; read < 5; read++) {
+                run.listed(['c1']);
+                await vi.advanceTimersByTimeAsync(1000 * 2 ** read);
+            }
+            run.listed(['c3']);
+
+            expect(run.emitted.map((action) => action.type)).not.toContain(alertActions.info.type);
+            run.unsubscribe();
+        });
+
+        test('keeps watching the first delete after a second one starts', async () => {
+            const run = startBulkDelete(['a1']);
+
+            run.next(certificatesActions.bulkDelete({ uuids: ['b1'], filters: [] }));
+            run.listed(['a1']);
+            await vi.advanceTimersByTimeAsync(1000);
+
+            expect(refreshes(run.emitted)).toBe(1);
+            run.unsubscribe();
+        });
+
+        test('re-reads for the first delete when a second delete request fails', async () => {
+            let calls = 0;
+            const run = startBulkDelete(['a1'], () => (calls++ === 0 ? of({ status: 'SUCCESS' }) : throwError(() => new Error('boom'))));
+
+            run.next(certificatesActions.bulkDelete({ uuids: ['b1'], filters: [] }));
+            expect(refreshes(run.emitted)).toBe(1);
+
+            run.listed(['a1']);
+            await vi.advanceTimersByTimeAsync(1000);
+            expect(refreshes(run.emitted)).toBe(2);
+            run.unsubscribe();
+        });
+
+        test('does not watch the certificates of a delete request that failed', async () => {
+            let calls = 0;
+            const run = startBulkDelete(['a1'], () => (calls++ === 0 ? of({ status: 'SUCCESS' }) : throwError(() => new Error('boom'))));
+
+            run.next(certificatesActions.bulkDelete({ uuids: ['b1'], filters: [] }));
+            const afterFailure = refreshes(run.emitted);
+            run.listed(['b1']);
+            await vi.advanceTimersByTimeAsync(60_000);
+
+            expect(refreshes(run.emitted)).toBe(afterFailure);
+            run.unsubscribe();
+        });
+
+        test('forgets certificates once a listing no longer shows them', async () => {
+            const run = startBulkDelete(['a1']);
+
+            run.listed(['c3']);
+            run.next(certificatesActions.bulkDelete({ uuids: ['b1'], filters: [] }));
+            run.listed(['a1']);
+            await vi.advanceTimersByTimeAsync(60_000);
+
+            expect(refreshes(run.emitted)).toBe(0);
+            run.unsubscribe();
+        });
+
+        test('forgets certificates the watch gave up on', async () => {
+            const run = startBulkDelete(['a1']);
+
+            await exhaustReads(run, 'a1');
+            run.next(certificatesActions.bulkDelete({ uuids: ['b1'], filters: [] }));
+            run.listed(['a1']);
+            await vi.advanceTimersByTimeAsync(60_000);
+
+            expect(refreshes(run.emitted)).toBe(5);
+            run.unsubscribe();
+        });
+
+        test('forgets pending certificates when the listing fails', async () => {
+            const run = startBulkDelete(['a1']);
+
+            run.next(pagingActions.listFailure(EntityType.CERTIFICATE));
+            run.next(certificatesActions.bulkDelete({ uuids: ['b1'], filters: [] }));
+            run.listed(['a1']);
+            await vi.advanceTimersByTimeAsync(60_000);
+
+            expect(refreshes(run.emitted)).toBe(0);
+            run.unsubscribe();
+        });
+
+        test('forgets pending certificates when no listing arrives', async () => {
+            const run = startBulkDelete(['a1']);
+
+            await vi.advanceTimersByTimeAsync(90_000);
+            run.next(certificatesActions.bulkDelete({ uuids: ['b1'], filters: [] }));
+            run.listed(['a1']);
+            await vi.advanceTimersByTimeAsync(60_000);
+
+            expect(refreshes(run.emitted)).toBe(0);
+            run.unsubscribe();
+        });
+
+        test('keeps re-reading while each listing arrives within the idle timeout, however long the back-off runs', async () => {
+            const run = startBulkDelete(['c1']);
+
+            for (let read = 0; read < 4; read++) {
+                run.listed(['c1']);
+                await vi.advanceTimersByTimeAsync(1000 * 2 ** read + 30_000);
+            }
+
+            expect(refreshes(run.emitted)).toBe(4);
+            run.unsubscribe();
+        });
+
+        test('stops when the listing a re-read asked for never arrives', async () => {
+            const run = startBulkDelete(['c1']);
+
+            run.listed(['c1']);
+            await vi.advanceTimersByTimeAsync(1000 + 90_000);
+            run.listed(['c1']);
+            await vi.advanceTimersByTimeAsync(60_000);
+
+            expect(refreshes(run.emitted)).toBe(1);
+            run.unsubscribe();
+        });
+
+        test('stops watching once no listing has arrived for the idle timeout', async () => {
+            const run = startBulkDelete(['c1']);
+
+            await vi.advanceTimersByTimeAsync(90_000);
+            run.listed(['c1']);
+            await vi.advanceTimersByTimeAsync(90_000);
+
+            expect(refreshes(run.emitted)).toBe(0);
+            run.unsubscribe();
+        });
+
+        test('unticks checked certificates that a listing no longer shows', () => {
+            const run = startBulkDelete(['c1'], undefined, ['c1', 'c3']);
+
+            run.listed(['c3']);
+
+            expect(run.emitted).toContainEqual(pagingActions.setCheckedRows({ entity: EntityType.CERTIFICATE, checkedRows: ['c3'] }));
+            run.unsubscribe();
+        });
+
+        test('leaves the selection alone while every checked certificate is still listed', async () => {
+            const run = startBulkDelete(['c1'], undefined, ['c1', 'c3']);
+
+            run.listed(['c1', 'c3']);
+            await vi.advanceTimersByTimeAsync(1000);
+
+            expect(run.emitted.map((action) => action.type)).not.toContain(pagingActions.setCheckedRows.type);
+            run.unsubscribe();
+        });
+
+        test('stops when the listing fails', async () => {
+            const run = startBulkDelete(['c1']);
+
+            run.listed(['c1']);
+            run.next(pagingActions.listFailure(EntityType.CERTIFICATE));
+            await vi.advanceTimersByTimeAsync(60_000);
+
+            expect(refreshes(run.emitted)).toBe(0);
+            run.unsubscribe();
+        });
+
+        test('asks for nothing further when the delete request fails', async () => {
+            const run = startBulkDelete(['c1'], () => throwError(() => new Error('boom')));
+
+            run.listed(['c1']);
+            await vi.advanceTimersByTimeAsync(60_000);
+
+            expect(run.emitted[0].type).toBe(certificatesActions.bulkDeleteFailure.type);
+            expect(refreshes(run.emitted)).toBe(0);
+            run.unsubscribe();
+        });
+    });
+});

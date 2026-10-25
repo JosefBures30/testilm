@@ -1,0 +1,210 @@
+name: ilm-local
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./postgres-init.sql:/docker-entrypoint-initdb.d/01-create-keycloak-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    restart: unless-stopped
+
+  rabbitmq:
+    image: hub.omnitrustregistry.com/ilm/rabbitmq:4.2.0
+    environment:
+      RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS: "-rabbitmq_management load_definitions '/tmp/definitions.json'"
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+      - ./generated/rabbitmq-definitions.json:/tmp/definitions.json:ro
+      - ./rabbitmq-enabled-plugins:/etc/rabbitmq/enabled_plugins:ro
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+    restart: unless-stopped
+
+  auth-opa-policies:
+    image: hub.omnitrustregistry.com/ilm/auth-opa-policies:develop-latest
+    restart: unless-stopped
+
+  opa:
+    image: hub.omnitrustregistry.com/ilm/opa:1.10.0-static
+    command:
+      - run
+      - --server
+      - --addr=0.0.0.0:8181
+      - --set=services.nginx.url=http://auth-opa-policies:8080
+      - --set=bundles.nginx.service=nginx
+      - --set=bundles.nginx.resource=bundles/bundle.tar.gz
+    depends_on:
+      - auth-opa-policies
+    restart: unless-stopped
+
+  auth:
+    image: hub.omnitrustregistry.com/ilm/auth:develop-latest
+    environment:
+      AUTH_CREATE_UNKNOWN_USERS: "true"
+      AUTH_CREATE_UNKNOWN_ROLES: "true"
+      SYNC_POLICY: create-only
+      AUTH_DB_CONNECTION_STRING: "Host=postgres;Port=5432;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD};Database=${POSTGRES_DB};Pooling=true"
+      ASPNETCORE_URLS: http://+:8080
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  scheduler:
+    image: hub.omnitrustregistry.com/ilm/scheduler:develop-latest
+    environment:
+      PORT: "8080"
+      JDBC_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB}?characterEncoding=UTF-8
+      JDBC_USERNAME: ${POSTGRES_USER}
+      JDBC_PASSWORD: ${POSTGRES_PASSWORD}
+      BROKER_HOST: rabbitmq
+      BROKER_PORT: "5672"
+      BROKER_USERNAME: ${RABBITMQ_CORE_USERNAME}
+      BROKER_PASSWORD: ${RABBITMQ_CORE_PASSWORD}
+      BROKER_VIRTUAL_HOST: /
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    restart: unless-stopped
+
+  keycloak:
+    image: hub.omnitrustregistry.com/ilm/keycloak-optimized:develop-latest
+    command: ["start", "--optimized", "--import-realm"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN_USERNAME}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD}
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB}
+      KC_DB_SCHEMA: keycloak
+      KC_DB_USERNAME: ${POSTGRES_USER}
+      KC_DB_PASSWORD: ${POSTGRES_PASSWORD}
+      KC_HTTP_ENABLED: "true"
+      KC_HTTP_RELATIVE_PATH: /kc
+      KC_PROXY_HEADERS: xforwarded
+      KC_HOSTNAME: http://localhost:8000/kc
+      KC_HOSTNAME_STRICT: "false"
+      KC_HEALTH_ENABLED: "true"
+    volumes:
+      - ./generated/ilm-realm.json:/opt/keycloak/data/import/ILM-realm.json:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  admin-certificate:
+    image: alpine:3.22
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        if [ -d /output/admin-cert.pem ]; then
+          rmdir /output/admin-cert.pem
+        fi
+        if [ ! -s /output/admin-cert.pem ]; then
+          apk add --no-cache openssl >/dev/null
+          openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \
+            -subj "/CN=Local ILM Administrator" \
+            -keyout /tmp/admin-key.pem -out /output/admin-cert.pem
+        fi
+    volumes:
+      - ./generated:/output
+    restart: "no"
+
+  core:
+    image: ilm/core:develop-latest
+    environment:
+      PORT: "8080"
+      HEADER_ENABLED: "true"
+      HEADER_NAME: ssl-client-cert
+      JDBC_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB}?characterEncoding=UTF-8
+      JDBC_USERNAME: ${POSTGRES_USER}
+      JDBC_PASSWORD: ${POSTGRES_PASSWORD}
+      DB_SCHEMA: core
+      AUTH_SERVICE_BASE_URL: http://auth:8080
+      OPA_BASE_URL: http://opa:8181
+      BROKER_HOST: rabbitmq
+      BROKER_PORT: "5672"
+      BROKER_USERNAME: ${RABBITMQ_CORE_USERNAME}
+      BROKER_PASSWORD: ${RABBITMQ_CORE_PASSWORD}
+      BROKER_VIRTUAL_HOST: /
+      SCHEDULER_BASE_URL: http://scheduler:8080
+      PROVISIONING_API_URL: ""
+      PROVISIONING_API_KEY: ""
+      INTERNAL_OAUTH_SECRET: ${OIDC_CLIENT_SECRET}
+      JAVA_OPTS: -Xms512m -Xmx2048m
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      auth:
+        condition: service_started
+      opa:
+        condition: service_started
+      scheduler:
+        condition: service_started
+    restart: unless-stopped
+
+  frontend-administrator:
+    image: ilm/frontend-administrator:develop-latest
+    volumes:
+      - ./config.js:/usr/share/nginx/html/config.js:ro
+    restart: unless-stopped
+
+  gateway:
+    image: hub.omnitrustregistry.com/ilm/kong:3.9.1
+    environment:
+      KONG_DATABASE: "off"
+      KONG_DECLARATIVE_CONFIG: /etc/kong/kong.yml
+      KONG_PROXY_LISTEN: 0.0.0.0:8000
+      KONG_ADMIN_LISTEN: "off"
+      KONG_LOG_LEVEL: notice
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - ./kong.yml:/etc/kong/kong.yml:ro
+    depends_on:
+      - core
+      - frontend-administrator
+      - keycloak
+    restart: unless-stopped
+
+  register-oidc:
+    image: hub.omnitrustregistry.com/ilm/curl:8.16.0
+    entrypoint: ["/bin/sh", "/scripts/register-oidc.sh"]
+    environment:
+      OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET}
+      ILM_ADMIN_USERNAME: ${ILM_ADMIN_USERNAME}
+      ILM_ADMIN_PASSWORD: ${ILM_ADMIN_PASSWORD}
+      ILM_ADMIN_FIRST_NAME: ${ILM_ADMIN_FIRST_NAME}
+      ILM_ADMIN_LAST_NAME: ${ILM_ADMIN_LAST_NAME}
+      ILM_ADMIN_EMAIL: ${ILM_ADMIN_EMAIL}
+    volumes:
+      - ./register-oidc.sh:/scripts/register-oidc.sh:ro
+      - ./generated:/certs:ro
+    depends_on:
+      core:
+        condition: service_started
+      keycloak:
+        condition: service_started
+      admin-certificate:
+        condition: service_completed_successfully
+    network_mode: service:core
+    restart: "no"
+
+volumes:
+  postgres-data:
+  rabbitmq-data:

@@ -1,0 +1,31 @@
+annotations:
+  category: trustLifecycleManagement
+apiVersion: v2
+appVersion: 4.2.0
+name: messaging-rabbitmq
+description: A Helm chart for RabbitMQ messaging for ILM platform.
+home: https://github.com/OmniTrustILM/ilm
+icon: https://raw.githubusercontent.com/OmniTrustILM/ilm/main/icon/ot-icon-color.svg
+dependencies:
+  - name: ilm-lib
+    # repository: oci://hub.omnitrustregistry.com/ilm-helm
+    repository: file://../ilm-lib
+    version: 1.4.2-1
+keywords:
+  - ilm
+  - trust
+  - management
+  - lifecycle
+  - platform
+  - messaging
+  - rabbitmq
+maintainers:
+  - name: OmniTrustILM
+    email: ilm@omnitrust.com
+    url: https://github.com/OmniTrustILM/helm-charts
+type: application
+sources:
+  - https://github.com/OmniTrustILM/ilm
+  - https://omnitrust.com
+  - https://docs.otilm.com
+version: 4.2.0-5

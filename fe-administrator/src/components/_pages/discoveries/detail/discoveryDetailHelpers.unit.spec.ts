@@ -1,0 +1,361 @@
+import { describe, expect, it } from 'vitest';
+
+import { ConnectorInterface, DiscoveryStatus, Resource } from 'types/openapi';
+import {
+    certificateNotes,
+    connectorInterfaceLabel,
+    connectorInterfaceVersion,
+    type DiscoveryLifecycleAction,
+    importRemainder,
+    providerState,
+    inventoryPath,
+    isLiveRun,
+    isNotProcessedRun,
+    lifecycleActionsForStatus,
+    progressRecordedCaption,
+    providerBar,
+    resultResources,
+    targetsCaption,
+    visibleLifecycleActions,
+} from './discoveryDetailHelpers';
+
+const ALL_STATUSES = Object.values(DiscoveryStatus);
+
+describe('lifecycle visibility matrix (stoppable × status)', () => {
+    it.each<[DiscoveryStatus, DiscoveryLifecycleAction[]]>([
+        [DiscoveryStatus.InProgress, ['stop', 'cancel']],
+        [DiscoveryStatus.Stopped, ['resume', 'cancel']],
+        [DiscoveryStatus.Processing, []],
+        [DiscoveryStatus.Completed, []],
+        [DiscoveryStatus.Failed, []],
+        [DiscoveryStatus.Warning, []],
+        [DiscoveryStatus.Cancelled, []],
+    ])('a stoppable run in %s offers %j', (status, expected) => {
+        expect(lifecycleActionsForStatus(status, true)).toEqual(expected);
+    });
+
+    it.each(ALL_STATUSES)('a run that is not stoppable offers nothing in %s, so a v1 run renders exactly as before', (status) => {
+        expect(lifecycleActionsForStatus(status, false)).toEqual([]);
+        expect(lifecycleActionsForStatus(status, undefined)).toEqual([]);
+    });
+
+    it('is exhaustive over the status enum', () => {
+        for (const status of ALL_STATUSES) {
+            expect(Array.isArray(lifecycleActionsForStatus(status, true))).toBe(true);
+        }
+    });
+
+    it('hides, rather than disables, an action the user lacks permission for', () => {
+        const run = { status: DiscoveryStatus.InProgress, stoppable: true };
+
+        expect(visibleLifecycleActions(run, () => true)).toEqual(['stop', 'cancel']);
+        expect(visibleLifecycleActions(run, (action) => action === 'cancel')).toEqual(['cancel']);
+        expect(visibleLifecycleActions(run, () => false)).toEqual([]);
+    });
+});
+
+describe('connectorInterfaceLabel', () => {
+    it('names the generation from the interface version', () => {
+        expect(connectorInterfaceLabel({ uuid: 'i-1', code: 'discovery' as any, version: 'v2' })).toBe('Discovery (v2)');
+    });
+
+    it('calls a run with no interface what it is', () => {
+        expect(connectorInterfaceLabel(undefined)).toBe('Legacy (v1)');
+    });
+
+    it('offers the version alone for a list column', () => {
+        expect(connectorInterfaceVersion({ uuid: 'i-1', code: 'discovery' as any, version: 'v2' })).toBe('v2');
+        expect(connectorInterfaceVersion(undefined)).toBe('v1');
+    });
+});
+
+describe('not-processed banner', () => {
+    it.each([
+        [DiscoveryStatus.Cancelled, true],
+        [DiscoveryStatus.Failed, true],
+        [DiscoveryStatus.Completed, false],
+        [DiscoveryStatus.Warning, false],
+        [DiscoveryStatus.InProgress, false],
+        [DiscoveryStatus.Stopped, false],
+        [DiscoveryStatus.Processing, false],
+        [undefined, false],
+    ])('%s → %s', (status, expected) => {
+        expect(isNotProcessedRun(status)).toBe(expected);
+    });
+});
+
+describe('isLiveRun', () => {
+    const v2 = { connectorInterface: { uuid: 'iface-1', code: ConnectorInterface.Discovery, version: 'v2' } };
+
+    it.each<[DiscoveryStatus, boolean]>([
+        [DiscoveryStatus.InProgress, true],
+        [DiscoveryStatus.Processing, true],
+        [DiscoveryStatus.Stopped, false],
+        [DiscoveryStatus.Completed, false],
+        [DiscoveryStatus.Warning, false],
+        [DiscoveryStatus.Failed, false],
+        [DiscoveryStatus.Cancelled, false],
+    ])('a run in %s is live: %s', (status, expected) => {
+        expect(isLiveRun({ status })).toBe(expected);
+        expect(isLiveRun({ ...v2, status })).toBe(expected);
+    });
+
+    it('keeps a v1 run live once Core flags it as overrunning, for as long as its Provider is still working', () => {
+        expect(isLiveRun({ status: DiscoveryStatus.Warning, connectorStatus: DiscoveryStatus.InProgress })).toBe(true);
+        expect(isLiveRun({ status: DiscoveryStatus.Warning, connectorStatus: DiscoveryStatus.Completed })).toBe(false);
+    });
+
+    it('treats a v2 Warning as the end, which Core never reopens', () => {
+        expect(isLiveRun({ ...v2, status: DiscoveryStatus.Warning, connectorStatus: DiscoveryStatus.InProgress })).toBe(false);
+    });
+
+    it('is not live before the run has been read', () => {
+        expect(isLiveRun(undefined)).toBe(false);
+    });
+});
+
+describe('result tab derivation', () => {
+    it('keeps the contract order', () => {
+        expect(resultResources([Resource.Keys, Resource.Certificates])).toEqual([Resource.Keys, Resource.Certificates]);
+    });
+
+    it('falls back to certificates for a response without the field', () => {
+        expect(resultResources(undefined)).toEqual([Resource.Certificates]);
+        expect(resultResources([])).toEqual([Resource.Certificates]);
+    });
+});
+
+describe('progressRecordedCaption', () => {
+    const recordedAt = '2026-09-13T12:32:07.000Z';
+    const fourMinutesLater = new Date('2026-09-13T12:36:07.000Z').getTime();
+
+    it('dates the reading and says how old it is', () => {
+        const caption = progressRecordedCaption(recordedAt, fourMinutesLater);
+
+        expect(caption).toMatch(/^as of \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} — 4 minutes ago$/);
+    });
+
+    it('is absent when the Provider has reported no progress at all', () => {
+        expect(progressRecordedCaption(undefined)).toBeUndefined();
+    });
+
+    it('still dates a reading taken this very second', () => {
+        const caption = progressRecordedCaption(recordedAt, new Date(recordedAt).getTime());
+
+        expect(caption).toMatch(/^as of \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/);
+    });
+});
+
+describe('targetsCaption', () => {
+    it('shows a denominator only when the Provider sent one', () => {
+        expect(targetsCaption(12, 30)).toBe('12 / 30 targets');
+        expect(targetsCaption(12, undefined)).toBe('12 targets');
+        expect(targetsCaption(undefined, 30)).toBe('30 targets in total');
+        expect(targetsCaption(undefined, undefined)).toBe('No target count reported');
+    });
+});
+
+describe('providerState', () => {
+    const v2 = { connectorInterface: { uuid: 'iface-1', code: ConnectorInterface.Discovery, version: 'v2' } };
+
+    it('says the Provider is working while a run is in progress', () => {
+        expect(providerState({ ...v2, status: DiscoveryStatus.InProgress, connectorStatus: DiscoveryStatus.InProgress })).toBe('working');
+    });
+
+    it('counts a Provider that reported completion as finished while Core still drains its last items', () => {
+        expect(providerState({ ...v2, status: DiscoveryStatus.InProgress, connectorStatus: DiscoveryStatus.Completed })).toBe('finished');
+    });
+
+    it('tells a paused run, a finished one and the two ways of ending early apart', () => {
+        expect(providerState({ ...v2, status: DiscoveryStatus.Stopped, connectorStatus: DiscoveryStatus.Stopped })).toBe('paused');
+        for (const status of [DiscoveryStatus.Processing, DiscoveryStatus.Completed, DiscoveryStatus.Warning]) {
+            expect(providerState({ ...v2, status, connectorStatus: DiscoveryStatus.Completed })).toBe('finished');
+        }
+        expect(providerState({ ...v2, status: DiscoveryStatus.Failed, connectorStatus: DiscoveryStatus.Failed })).toBe('failed');
+        expect(providerState({ ...v2, status: DiscoveryStatus.Cancelled, connectorStatus: DiscoveryStatus.Cancelled })).toBe('cancelled');
+    });
+});
+
+describe('providerBar', () => {
+    const certificates = [Resource.Certificates];
+    const full = { value: 1, max: 1 };
+
+    it('measures targets against the total the Provider sent, whatever the Provider is doing', () => {
+        const progress = { targetsProcessed: 12, targetsTotal: 30 };
+
+        expect(providerBar(progress, 'working', certificates)).toEqual({ value: 12, max: 30, caption: '12 / 30 targets' });
+        expect(providerBar(progress, 'finished', certificates)).toEqual({ value: 12, max: 30, caption: '12 / 30 targets' });
+    });
+
+    it('groups the digits of large counts', () => {
+        expect(providerBar({ targetsProcessed: 65536, targetsTotal: 65536 }, 'working', certificates).caption).toBe(
+            '65,536 / 65,536 targets',
+        );
+    });
+
+    it('keeps the true ratio of a run that ended partway, in the tone of how it ended', () => {
+        expect(providerBar({ targetsProcessed: 300, targetsTotal: 768 }, 'cancelled', certificates)).toMatchObject({
+            value: 300,
+            max: 768,
+            tone: 'info',
+        });
+        expect(providerBar({ targetsProcessed: 300, targetsTotal: 768 }, 'failed', certificates)).toMatchObject({ tone: 'warning' });
+    });
+
+    it('keeps a bar without a total moving only while the Provider works', () => {
+        const progress = { targetsProcessed: 12 };
+
+        expect(providerBar(progress, 'working', certificates)).toEqual({ value: 12, max: undefined, caption: '12 targets' });
+        expect(providerBar(progress, 'finished', certificates)).toEqual({ ...full, caption: '12 targets' });
+        expect(providerBar(progress, 'paused', certificates)).toEqual({ value: 0, max: 1, caption: '12 targets' });
+        expect(providerBar(progress, 'failed', certificates)).toEqual({ ...full, caption: '12 targets', tone: 'warning' });
+    });
+
+    it("counts the items of the run's one resource against its estimate when the Provider counts no targets", () => {
+        const progress = { phase: 'searching', byResource: { certificates: { produced: 3700, totalEstimate: 12000 } } };
+
+        expect(providerBar(progress, 'working', certificates)).toEqual({
+            value: 3700,
+            max: 12000,
+            caption: '3,700 / ~12,000 certificates',
+        });
+        expect(providerBar({ byResource: { certificates: { totalEstimate: 12000 } } }, 'working', certificates)).toEqual({
+            value: 0,
+            max: 12000,
+            caption: '0 / ~12,000 certificates',
+        });
+    });
+
+    it('says how many items were found when there is no estimate, filling the bar only once the Provider is done', () => {
+        const progress = { byResource: { certificates: { produced: 1180 } } };
+
+        expect(providerBar(progress, 'working', certificates)).toEqual({
+            value: 1180,
+            max: undefined,
+            caption: '1,180 certificates found',
+        });
+        expect(providerBar(progress, 'finished', certificates)).toEqual({ ...full, caption: '1,180 certificates found' });
+    });
+
+    it('names one item in the singular', () => {
+        expect(providerBar({ byResource: { keys: { produced: 1 } } }, 'working', [Resource.Keys]).caption).toBe('1 key found');
+        expect(providerBar({ byResource: { keys: { produced: 0, totalEstimate: 1 } } }, 'working', [Resource.Keys]).caption).toBe(
+            '0 / ~1 key',
+        );
+    });
+
+    it('prefers targets whenever the Provider counts them, whatever it reports per resource', () => {
+        const progress = { targetsProcessed: 4, byResource: { certificates: { produced: 3700, totalEstimate: 12000 } } };
+
+        expect(providerBar(progress, 'working', certificates)).toEqual({ value: 4, max: undefined, caption: '4 targets' });
+    });
+
+    it('draws no items count for a run of several resources, even while the Provider reports only one of them', () => {
+        const progress = { byResource: { certificates: { produced: 3700, totalEstimate: 12000 } } };
+
+        expect(providerBar(progress, 'working', [Resource.Certificates, Resource.Keys]).caption).toBe('No target count reported');
+    });
+
+    it('has no count to draw for no resource, or one the Provider did not count', () => {
+        for (const progress of [{}, { byResource: { certificates: { phase: 'searching' } } }]) {
+            expect(providerBar(progress, 'working', certificates)).toEqual({
+                value: undefined,
+                max: undefined,
+                caption: 'No target count reported',
+            });
+            expect(providerBar(progress, 'finished', certificates)).toEqual({ ...full, caption: 'No target count reported' });
+        }
+    });
+});
+
+describe('importRemainder', () => {
+    it('is what is neither imported nor failed', () => {
+        expect(importRemainder({ itemsNewlyDiscovered: 2306, itemsProcessed: 1840, itemsFailed: 6 })).toBe(460);
+    });
+
+    it('reports zero for a run that imported nothing, never a negative or an absence', () => {
+        expect(importRemainder({ itemsNewlyDiscovered: 0, itemsProcessed: 0, itemsFailed: 0 })).toBe(0);
+        expect(importRemainder({ itemsNewlyDiscovered: 3, itemsProcessed: 3, itemsFailed: 1 })).toBe(0);
+        expect(importRemainder({} as any)).toBe(0);
+    });
+});
+
+describe('certificateNotes', () => {
+    const certificatesOnly = { resources: [Resource.Certificates], status: DiscoveryStatus.Completed };
+
+    it('reads a provider figure above the saved one as repeats when everything was handed over', () => {
+        // Four hosts answered with a three-certificate chain each: 12 items, 8 distinct certificates.
+        expect(
+            certificateNotes({
+                ...certificatesOnly,
+                itemsDiscovered: 12,
+                totalCertificatesDiscovered: 8,
+                connectorTotalCertificatesDiscovered: 12,
+            }),
+        ).toEqual([{ kind: 'repeats', count: 4 }]);
+    });
+
+    it('reads items reported above items received as never handed over once the run has ended', () => {
+        expect(
+            certificateNotes({
+                ...certificatesOnly,
+                status: DiscoveryStatus.Cancelled,
+                itemsDiscovered: 9,
+                totalCertificatesDiscovered: 8,
+                connectorTotalCertificatesDiscovered: 12,
+            }),
+        ).toEqual([
+            { kind: 'notHandedOver', count: 3 },
+            { kind: 'repeats', count: 1 },
+        ]);
+    });
+
+    it('holds the never-handed-over note while the run is still live, when the provider is expected to lead', () => {
+        expect(
+            certificateNotes({
+                ...certificatesOnly,
+                status: DiscoveryStatus.InProgress,
+                itemsDiscovered: 9,
+                totalCertificatesDiscovered: 8,
+                connectorTotalCertificatesDiscovered: 12,
+            }),
+        ).toEqual([{ kind: 'repeats', count: 1 }]);
+    });
+
+    it('says nothing when the figures agree', () => {
+        expect(
+            certificateNotes({
+                ...certificatesOnly,
+                itemsDiscovered: 8,
+                totalCertificatesDiscovered: 8,
+                connectorTotalCertificatesDiscovered: 8,
+            }),
+        ).toEqual([]);
+    });
+
+    it('says nothing for a v1 run or a run with other resources, whose figures cannot be split', () => {
+        expect(certificateNotes({ ...certificatesOnly, totalCertificatesDiscovered: 8, connectorTotalCertificatesDiscovered: 12 })).toEqual(
+            [],
+        );
+        expect(
+            certificateNotes({
+                resources: [Resource.Certificates, Resource.Keys],
+                status: DiscoveryStatus.Completed,
+                itemsDiscovered: 52,
+                totalCertificatesDiscovered: 48,
+                connectorTotalCertificatesDiscovered: 48,
+            }),
+        ).toEqual([]);
+    });
+});
+
+describe('inventoryPath', () => {
+    it('links the resources that have a detail page', () => {
+        expect(inventoryPath(Resource.Certificates, 'c-1')).toBe('../../certificates/detail/c-1');
+        expect(inventoryPath(Resource.Keys, 'k-1')).toBe('../../keys/detail/k-1');
+    });
+
+    it('has no link for a resource without one', () => {
+        expect(inventoryPath(Resource.Discoveries, 'x')).toBeUndefined();
+    });
+});

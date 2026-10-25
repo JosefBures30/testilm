@@ -1,0 +1,181 @@
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { useDispatch } from 'react-redux';
+import { actions as alertActions } from 'ducks/alerts';
+import { isObjectSame } from 'utils/common-utils';
+
+interface WindowSizes {
+    width: number;
+    height: number;
+}
+
+export function useWindowSize(): WindowSizes {
+    const [screenDimensions, setScreenDimensions] = useState<WindowSizes>({
+        width: window.innerWidth,
+        height: window.innerHeight,
+    });
+
+    useEffect(() => {
+        function handleResize() {
+            setScreenDimensions({
+                width: window.innerWidth,
+                height: window.innerHeight,
+            });
+        }
+
+        window.addEventListener('resize', handleResize);
+        return () => window.removeEventListener('resize', handleResize);
+    }, []);
+
+    return screenDimensions;
+}
+
+export enum DeviceType {
+    Mobile = 'mobile',
+    Tablet = 'tablet',
+    Desktop = 'desktop',
+}
+
+export function useDeviceType(): DeviceType {
+    const [deviceType, setDeviceType] = useState<DeviceType>(DeviceType.Desktop);
+
+    useEffect(() => {
+        function handleResize() {
+            const { innerWidth } = globalThis;
+            if (innerWidth <= 768) {
+                setDeviceType(DeviceType.Mobile);
+            } else if (innerWidth <= 1024) {
+                setDeviceType(DeviceType.Tablet);
+            } else {
+                setDeviceType(DeviceType.Desktop);
+            }
+        }
+
+        handleResize();
+        window.addEventListener('resize', handleResize);
+        return () => window.removeEventListener('resize', handleResize);
+    }, []);
+
+    return deviceType;
+}
+
+export const useCopyToClipboard = () => {
+    const dispatch = useDispatch();
+
+    const copyToClipboard = useCallback(
+        (
+            text: string,
+            successMessage: string = 'Content was copied to clipboard',
+            errorMessage: string = 'Failed to copy content to clipboard',
+        ) => {
+            navigator.clipboard
+                .writeText(text)
+                .then(() => dispatch(alertActions.success(successMessage)))
+                .catch(() => dispatch(alertActions.error(errorMessage)));
+        },
+        [dispatch],
+    );
+
+    return copyToClipboard;
+};
+
+/**
+ * Calls `callback` only when async operation finished successfully.
+ *
+ * Usage pattern:
+ * - `isLoading` goes `true -> false`
+ * - `isSucceeded` must be `true` for the same operation
+ */
+export function useRunOnSuccessfulFinish(isLoading: boolean, isSucceeded: boolean, callback?: () => void) {
+    const wasLoading = useRef(isLoading);
+
+    useEffect(() => {
+        if (wasLoading.current && !isLoading && isSucceeded) {
+            callback?.();
+        }
+        wasLoading.current = isLoading;
+    }, [isLoading, isSucceeded, callback]);
+}
+
+/**
+ * Calls `callback` only when async operation finished unsuccessfully.
+ *
+ * Usage pattern:
+ * - `isLoading` goes `true -> false`
+ * - `isSucceeded` is `false` for the same operation
+ */
+export function useRunOnFailedFinish(isLoading: boolean, isSucceeded: boolean, callback?: () => void) {
+    const wasLoading = useRef(isLoading);
+
+    useEffect(() => {
+        if (wasLoading.current && !isLoading && !isSucceeded) {
+            callback?.();
+        }
+        wasLoading.current = isLoading;
+    }, [isLoading, isSucceeded, callback]);
+}
+
+/**
+ * Calls `callback` when an async operation finishes, regardless of outcome.
+ *
+ * Fires on the `isLoading` `true -> false` transition only, so it never triggers
+ * off a success/failure flag left over from an earlier operation.
+ */
+export function useRunOnFinish(isLoading: boolean, callback?: () => void) {
+    const wasLoading = useRef(isLoading);
+
+    useEffect(() => {
+        if (wasLoading.current && !isLoading) {
+            callback?.();
+        }
+        wasLoading.current = isLoading;
+    }, [isLoading, callback]);
+}
+
+export function useAreDefaultValuesSame(defaultValues: Record<string, unknown>) {
+    return useCallback((values: Record<string, unknown>) => isObjectSame(values, defaultValues), [defaultValues]);
+}
+
+/**
+ * Whether an element's content is wider than the element, i.e. whether the browser is applying the
+ * ellipsis. Measured by a ResizeObserver on the element, because rearranging a column set changes
+ * cell widths with no window resize.
+ *
+ * The returned ref is a callback ref: acting on truncation usually means wrapping the element, which
+ * remounts it, and an object ref would keep pointing at the detached node and measure zero width.
+ * `value` is what the element renders, and re-measures on a text change the observer cannot see.
+ */
+export function useIsTruncated<T extends HTMLElement>(value: unknown): [(node: T | null) => void, boolean] {
+    const [isTruncated, setIsTruncated] = useState(false);
+    const nodeRef = useRef<T | null>(null);
+    const observerRef = useRef<ResizeObserver | null>(null);
+
+    const measure = useCallback(() => {
+        const node = nodeRef.current;
+        if (!node?.isConnected) return;
+        setIsTruncated(node.scrollWidth > node.clientWidth);
+    }, []);
+
+    const ref = useCallback(
+        (node: T | null) => {
+            observerRef.current?.disconnect();
+            observerRef.current = null;
+            nodeRef.current = node;
+            if (!node) return;
+
+            measure();
+            if (typeof ResizeObserver === 'undefined') return;
+            const observer = new ResizeObserver(measure);
+            observer.observe(node);
+            observerRef.current = observer;
+        },
+        [measure],
+    );
+
+    useEffect(() => {
+        measure();
+    }, [value, measure]);
+
+    useEffect(() => () => observerRef.current?.disconnect(), []);
+
+    return [ref, isTruncated];
+}

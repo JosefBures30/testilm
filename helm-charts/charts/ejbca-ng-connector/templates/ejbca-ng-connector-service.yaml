@@ -1,0 +1,17 @@
+{{- $additionalPorts := (include "ejbca-ng-connector.customization.ports" $) }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: ejbca-ng-connector-service
+  labels:
+    {{- include "ejbca-ng-connector.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - port: {{ .Values.service.port }}
+      protocol: "TCP"
+    {{- if $additionalPorts }}
+      {{- $additionalPorts | nindent 4 }}
+    {{- end }}
+  selector:
+    {{- include "ejbca-ng-connector.selectorLabels" . | nindent 4 }}

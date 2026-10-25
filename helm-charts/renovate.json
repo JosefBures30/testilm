@@ -1,0 +1,13 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:base"
+  ],
+  "hostRules": [
+    {
+      "matchHost": "hub.omnitrustregistry.com",
+      "username": "ilm-github-actions",
+      "password": "{{ secrets.CONTAINER_REGISTRY_PASSWORD }}"
+    }
+  ]
+}

@@ -1,0 +1,172 @@
+{{/*
+Expand the name of the chart.
+*/}}
+{{- define "scheduler-service.name" -}}
+{{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" }}
+{{- end }}
+
+{{/*
+Create a default fully qualified app name.
+We truncate at 63 chars because some Kubernetes name fields are limited to this (by the DNS naming spec).
+If release name contains chart name it will be used as a full name.
+*/}}
+{{- define "scheduler-service.fullname" -}}
+{{- if .Values.fullnameOverride }}
+{{- .Values.fullnameOverride | trunc 63 | trimSuffix "-" }}
+{{- else }}
+{{- $name := default .Chart.Name .Values.nameOverride }}
+{{- if contains $name .Release.Name }}
+{{- .Release.Name | trunc 63 | trimSuffix "-" }}
+{{- else }}
+{{- printf "%s-%s" .Release.Name $name | trunc 63 | trimSuffix "-" }}
+{{- end }}
+{{- end }}
+{{- end }}
+
+{{/*
+Create chart name and version as used by the chart label.
+*/}}
+{{- define "scheduler-service.chart" -}}
+{{- printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | trunc 63 | trimSuffix "-" }}
+{{- end }}
+
+{{/*
+Common labels
+*/}}
+{{- define "scheduler-service.labels" -}}
+helm.sh/chart: {{ include "scheduler-service.chart" . }}
+{{ include "scheduler-service.selectorLabels" . }}
+{{- if .Chart.AppVersion }}
+app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
+{{- end }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end }}
+
+{{/*
+Selector labels
+*/}}
+{{- define "scheduler-service.selectorLabels" -}}
+app.kubernetes.io/name: {{ include "scheduler-service.name" . }}
+app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end }}
+
+{{/*
+Create the name of the service account to use
+*/}}
+{{- define "scheduler-service.serviceAccountName" -}}
+{{- if .Values.serviceAccount.create }}
+{{- default (include "scheduler-service.fullname" .) .Values.serviceAccount.name }}
+{{- else }}
+{{- default "default" .Values.serviceAccount.name }}
+{{- end }}
+{{- end }}
+
+{{/*
+Return the image name
+*/}}
+{{- define "scheduler-service.image" -}}
+{{ include "ilm-lib.images.image" (dict "image" .Values.image "global" .Values.global) }}
+{{- end -}}
+
+{{/*
+Return the image name of the messaging-service
+*/}}
+{{- define "scheduler-service.curl.image" -}}
+{{ include "ilm-lib.images.image" (dict "image" .Values.curl.image "global" .Values.global) }}
+{{- end -}}
+
+{{/*
+Return the image pull secret names
+*/}}
+{{- define "scheduler-service.imagePullSecrets" -}}
+{{ include "ilm-lib.images.pullSecrets" (dict "images" (list .Values.image) "global" .Values.global) }}
+{{- end -}}
+
+{{/*
+Retun the ephemeral volume configuration
+*/}}
+{{- define "scheduler-service.ephemeralVolume" -}}
+{{ include "ilm-lib.volumes.ephemeral" (dict "volumes" .Values.volumes "global" .Values.global.volumes) }}
+{{- end -}}
+
+{{/*
+Render init containers, if any
+*/}}
+{{- define "scheduler-service.customization.initContainers" -}}
+{{- include "ilm-lib.customizations.render.yaml" ( dict "parts" (list .Values.global.initContainers .Values.initContainers) "context" $ ) }}
+{{- end -}}
+
+{{/*
+Render sidecar containers, if any
+*/}}
+{{- define "scheduler-service.customization.sidecarContainers" -}}
+{{- include "ilm-lib.customizations.render.yaml" ( dict "parts" (list .Values.global.sidecarContainers .Values.sidecarContainers) "context" $ ) }}
+{{- end -}}
+
+{{/*
+Render additional volumes, if any
+*/}}
+{{- define "scheduler-service.customization.volumes" -}}
+{{- include "ilm-lib.customizations.render.yaml" ( dict "parts" (list .Values.global.additionalVolumes .Values.additionalVolumes) "context" $ ) }}
+{{- end -}}
+
+{{/*
+Render additional volume mounts, if any
+*/}}
+{{- define "scheduler-service.customization.volumeMounts" -}}
+{{- include "ilm-lib.customizations.render.yaml" ( dict "parts" (list .Values.global.additionalVolumeMounts .Values.additionalVolumeMounts) "context" $ ) }}
+{{- end -}}
+
+{{/*
+Render customized ports, if any
+*/}}
+{{- define "scheduler-service.customization.ports" -}}
+{{- include "ilm-lib.customizations.render.yaml" ( dict "parts" (list .Values.global.additionalPorts .Values.additionalPorts) "context" $ ) }}
+{{- end -}}
+
+{{/*
+Render customized environment variables, if any
+*/}}
+{{- define "scheduler-service.customization.env" -}}
+{{- include "ilm-lib.customizations.render.yaml" ( dict "parts" (list .Values.global.additionalEnv.variables .Values.additionalEnv.variables) "context" $ ) }}
+{{- end -}}
+
+{{/*
+Render customized environment variables from configmaps and secrets, if any
+*/}}
+{{- define "scheduler-service.customization.envFrom" -}}
+{{- include "ilm-lib.customizations.render.configMapEnv" ( dict "parts" (list .Values.global.additionalEnv.configMaps .Values.additionalEnv.configMaps) "context" $ ) }}
+{{- include "ilm-lib.customizations.render.secretEnv" ( dict "parts" (list .Values.global.additionalEnv.secrets .Values.additionalEnv.secrets) "context" $ ) }}
+{{- end -}}
+
+{{/*
+Render customized command and arguments, if any
+*/}}
+{{- define "scheduler-service.image.command" -}}
+{{- include "ilm-lib.tplvalues.render" (dict "value" .Values.image.command "context" $) }}
+{{- end -}}
+
+{{- define "scheduler-service.image.args" -}}
+{{- include "ilm-lib.tplvalues.render" (dict "value" .Values.image.args "context" $) }}
+{{- end -}}
+
+{{- define "scheduler-service.curl.image.command" -}}
+{{- include "ilm-lib.tplvalues.render" (dict "value" .Values.curl.image.command "context" $) }}
+{{- end -}}
+
+{{- define "scheduler-service.curl.image.args" -}}
+{{- include "ilm-lib.tplvalues.render" (dict "value" .Values.curl.image.args "context" $) }}
+{{- end -}}
+
+{{/* Preserve generated-name rules unless a global or local existing bundle is selected. */}}
+{{- define "scheduler-service.messagingSecretName" -}}
+{{- if and .Values.messaging.existingSecret (not .Values.global.messaging.existingSecret) (or .Values.messaging.local .Values.global.config.enabled) -}}
+{{- fail "Use global.messaging.existingSecret for shared configuration or an embedded broker" -}}
+{{- end -}}
+{{- $existing := pluck "existingSecret" .Values.global.messaging .Values.messaging | compact | first -}}
+{{- if $existing -}}
+{{- $existing -}}
+{{- else -}}
+{{- if .Values.global.config.enabled -}}messaging-secret{{- else -}}messaging-secret-{{ .Chart.Name | lower }}{{- end -}}
+{{- end -}}
+{{- end -}}

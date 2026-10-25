@@ -1,0 +1,324 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## Commands
+
+```bash
+# Development
+npm run start               # Start Vite dev server
+
+# Build
+npm run build               # Production build → build/
+
+# Testing
+npm run test:vitest         # Run unit tests (Vitest)
+npm run test:vitest:watch   # Unit tests in watch mode
+npm run test:vitest:cov     # Unit tests with coverage → coverage-vitest/
+npm run test:playwright     # Component tests (Playwright CT)
+npm run test:all            # Run all tests
+
+# Linting & formatting
+npm run lint                # Biome check (lint + format verification)
+npm run format              # Biome format --write
+
+# Typechecking
+npm run typecheck           # Typecheck hand-written code (use this; plain `tsc --noEmit` fails on known config deprecations)
+
+# Type generation
+npm run generate-types      # Generate TypeScript types from remote OpenAPI spec
+npm run generate-types-local # Generate from local OpenAPI spec
+```
+
+**Running a single test file:**
+
+```bash
+npx vitest run src/utils/myfile.spec.ts
+npx playwright test -c playwright-ct.config.ts src/components/MyComponent.spec.tsx
+```
+
+## Architecture
+
+### State Management: Redux Toolkit + Redux Observable
+
+All application state lives in `src/ducks/`. Each feature domain has two files:
+
+- `feature.ts` — Redux slice (state shape, reducers, actions, selectors)
+- `feature-epics.ts` — RxJS Observable side effects (API calls, async logic)
+
+**Async action pattern:** Every async operation has three actions: `action`, `actionSuccess`, `actionFailure`. Epics listen for `action`, call the API, then dispatch `actionSuccess` or `actionFailure`.
+
+State is combined in `src/ducks/reducers.ts`. The `AppState` type and combined epic are exported from `src/ducks/index.ts`.
+
+### API Layer
+
+`src/api.ts` instantiates all OpenAPI-generated API clients (~40+). The backend URL is read from `window.__ENV__.API_URL` or defaults to `/api`. A secondary "utils" backend client is configured separately via `updateBackendUtilsClients()`.
+
+Types are auto-generated from OpenAPI specs into `src/types/openapi/` — do not edit these files manually.
+
+### Routing & Pages
+
+React Router with `HashRouter`. All routes are defined in `src/components/AppRouter.tsx`. Page components live in `src/components/_pages/` following a list/detail/form pattern.
+
+### Module Aliases
+
+Vite is configured with path aliases — always use these instead of relative paths:
+
+- `components/` → `src/components/`
+- `ducks/` → `src/ducks/`
+- `types/` → `src/types/`
+- `utils/` → `src/utils/`
+
+### Testing Strategy
+
+- **Unit tests (Vitest):** For utilities (`src/utils/**/*.spec.ts`) and Redux slices/epics (`src/ducks/**/*.spec.ts`). Environment: happy-dom.
+- **Component tests (Playwright CT):** For React components (`src/**/*.spec.tsx`). Multi-browser (Chromium, Firefox, WebKit). Test server runs on port 3100.
+
+### Styling
+
+Tailwind CSS 4 with Preline UI components. The main CSS entry is `src/tailwindcss.css`.
+
+### Theming
+
+The application supports light, dark and system themes, defaulting to system. Colour is expressed
+through semantic tokens, never through raw palette utilities or `dark:` colour variants.
+
+**Three tiers in `src/tailwindcss.css`:**
+
+1. **Primitives** — the `@theme` palette (`--color-blue-*`, `--color-gray-*`). Raw values, never
+   themed, not used directly by components.
+2. **Semantic custom properties** — declared once under `:root` (light values) and again under
+   `.dark` (dark values), e.g. `--surface-raised`, `--content`, `--brand-solid`.
+3. **`@theme inline`** — maps each semantic property onto a `--color-*` Tailwind token (e.g.
+   `--color-surface-raised: var(--surface-raised)`). The `inline` keyword is essential: it makes
+   Tailwind emit `var(--surface-raised)` into the generated utility instead of baking in a literal
+   value, which is what lets the theme flip at runtime by toggling the `.dark` class.
+
+**Always use semantic tokens in components:**
+
+```tsx
+<div className="bg-surface-raised text-content border border-divider" />
+```
+
+Never write `bg-white`, `text-gray-700`, or a `dark:` colour utility — the token already carries
+both themes, so a `dark:` colour utility is a sign the wrong token was chosen. A `dark:` utility on
+a *non-colour* property is fine, e.g. `border-divider dark:border`: `border` alone is a width
+utility, so it can toggle per theme while the colour token stays unconditional. This is how a
+component gets a border in dark mode only.
+
+**Semantic roles**, grouped by tier-2 custom property name (same name minus the `--` prefix is the
+Tailwind utility suffix, e.g. `--surface-raised` → `bg-surface-raised`):
+
+| Group | Tokens |
+|---|---|
+| Surfaces | `surface`, `surface-raised`, `surface-sunken`, `surface-hover`, `surface-active`, `surface-inverse`, `surface-header` |
+| Content | `content`, `content-muted`, `content-subtle`, `content-hint`, `content-inverse`, `content-on-brand` |
+| Lines | `divider`, `outline` |
+| Brand | `brand`, `brand-solid`, `brand-solid-hover`, `brand-hover`, `brand-subtle` |
+| Status | `success`, `danger`, `warning`, `info`, each with a `-surface` and `-solid` variant (`danger` and `warning` also have `-fill`/`-fill-hover`) |
+
+`code-color` is a semantic custom property too (used by `.server-content code`), but it has no
+`@theme inline` mapping, so there is no `text-code-color` utility — it is only reachable from
+hand-written CSS via `var(--code-color)`.
+
+A further `node-*` token family (`node-valid`, `node-expired`, `node-revoked`, `node-expiring`,
+`node-invalid`, `node-unchecked`, `node-failed`, `node-inactive`, `node-default`,
+`node-default-text`, `node-default-fill`, `node-danger-action`, `node-icon`, `node-icon-inverse`)
+exists solely for `components/FlowChart` — per-certificate-status node and expand-button colours,
+used with Tailwind opacity modifiers (e.g. `!bg-node-valid/62`). Don't reach for these outside the
+flow chart; they are not part of the general vocabulary.
+
+**Foreground and fill roles are separate tokens.** `brand` is for text, links and icons, and
+lightens in dark mode for contrast. `brand-solid` is the button fill and stays the same dark blue in
+both themes so white text keeps contrast against it; `brand-solid-hover` is its hover state.
+`brand-hover` is the *foreground* hover (for text/links built on `brand`) — using it as a fill hover
+drops white text to a contrast ratio that fails accessibility. Status colours split the same way:
+the plain token for text and icons, `-surface` for tinted backgrounds, `-solid` for non-text
+indicators such as status dots and chart series.
+
+`danger` and `warning` additionally have `-fill`/`-fill-hover` tokens, theme-invariant like
+`brand-solid`. They exist because `-solid` is tuned to be a vivid *indicator* colour (a status dot,
+a chart series), not a button fill — white text on `danger-solid`/`warning-solid` fails AA, and no
+amount of darkening the text fixes it, since the fill itself is too light. A solid `danger` or
+`warning` `Button` therefore uses `danger-fill`/`warning-fill` (and their `-hover` variants) so
+`content-on-brand` white text stays AA in both themes, while `-solid` is left alone for dots and
+chart series.
+
+`content-inverse` is light in both themes, because `surface-inverse` (tooltips) is dark in both.
+
+The same split governs `Badge`, whose `fill` prop defaults to `surface`. A badge that carries text
+must stay on the tinted `-surface`/plain-text treatment; `fill="solid"` paints the vivid `-solid`
+fill and is only for icon-only indicators such as `StatusCircle`, where the 3:1 non-text threshold
+applies. Never paint a raw status hex onto a `Badge` as an inline background either — map the
+status to a `BadgeColor` instead (see `getCertificateStatusBadgeColor`), because the indicator
+hexes sit at a luminance where neither black nor white text reaches 4.5:1.
+
+Hand-written CSS must reference the tier-2 variable directly — `var(--surface-raised)`, never
+`var(--color-surface-raised)` — because `@theme inline` does not emit `--color-*` custom properties
+into `:root`; it only feeds Tailwind's utility generator. Using the `--color-*` name in hand-written
+CSS fails silently: the declaration parses but resolves to nothing.
+
+**Recharts and reactflow take colours as JS props, not classes**, so components that colour them
+(`components/FlowChart`, the dashboard chart components) call `useTheme()` from
+`components/ThemeProvider` and select a colour palette keyed on `resolvedTheme`. `JsonViewer`
+does the same, since it builds syntax-highlighted HTML in JS rather than with Tailwind classes.
+
+Chart series and status dots are the exception: they are picked per *datum*, not per theme, so a
+theme-keyed palette would have to be duplicated for every status. They instead use one
+theme-invariant colour drawn from a mid-luminance band that clears 3:1 against `surface-raised` in
+both themes. `src/utils/chart-contrast.ts` holds the rule (`meetsChartContrast`, and `toChartHex`
+for the generated overflow hues), and `chart-contrast.spec.ts` asserts every certificate status,
+secret status and donut palette entry satisfies it — so a new status colour has to be picked inside
+the band, not at either extreme.
+
+**Runtime.** `src/utils/theme.ts` owns theme resolution, persistence and DOM application, and is
+framework-free. There are three modes — `system`, `light`, `dark` — and `system` resolves from the OS
+preference, giving the two `ResolvedTheme` values the stylesheet actually renders.
+
+**Branding does not add modes.** It changes which palette `light` and `dark` render: the operator's
+compositions when branding is configured, the platform's own when it is not. That swap lives in the
+stylesheet's token layer, so nothing in the theme runtime needs to know whether the instance is
+branded. The one branding input it does read is `defaultTheme`.
+
+Resolution has two steps, and keeping them separate is what makes the model work. `initialMode()`
+picks the mode: the user's own stored choice, then the operator's default, then `system`. Then
+`resolveTheme()` renders it, consulting the OS only for `system` — where the `matchMedia` listener
+keeps the theme moving live. So an operator default of `dark` puts the control on Dark rather than
+leaving it on System showing a light page, and a user who then picks System outranks the operator and
+follows their own OS again.
+
+That last part is why `readStoredMode()` returns `undefined` rather than defaulting to `system`:
+"never chose" has to stay distinguishable from "chose System", or the operator default could never
+apply. For the same reason the chosen mode is persisted in `setMode`/`cycleMode` rather than in an
+effect on `mode` — an effect would also fire for the operator default and pin the user to it.
+
+`components/ThemeProvider` exposes `useTheme()` (mode, resolvedTheme, setMode, cycleMode). It is
+store-free so a component test can mount it directly; `components/ThemeProvider/ConnectedThemeProvider`
+is the wrapper that feeds it the branding read from the `branding` duck, and withholds it while the
+read is in flight or has failed, because a failed read settles the slice on the platform default and
+would otherwise be indistinguishable from a live "not branded" answer. `useTheme()` throws when
+called outside the provider, so any component test harness that renders a theme-consuming component
+needs a `ThemeProvider` wrapper.
+
+The operator default is cached in `localStorage` under `theme-operator-default`, written only from a
+live branding response. An inline script in `index.html` applies the stored mode, or that cache, or
+the OS preference before first paint so nobody sees a white flash; it duplicates the resolution logic
+from `theme.ts` deliberately, because it runs before any module has loaded, and the two must be kept
+in step by hand. The user-facing control is a single header icon (`components/ThemeToggle`) that
+cycles System → Light → Dark → System.
+
+**Accessibility.** `src/utils/theme-tokens.spec.ts` parses the semantic tokens out of the stylesheet
+and asserts WCAG AA (4.5:1) contrast for every text/background pairing, in both themes, plus AA
+non-text contrast (WCAG 1.4.11, 3:1) for `outline` and each `-solid` status token against
+`surface-raised`. Changing a token value to something that fails either threshold fails the suite.
+
+`content-hint` is the single exception, and it is asserted separately rather than left unmeasured. It
+is the placeholder colour, deliberately below AA body contrast, because holding a placeholder at the
+4.5:1 `content-subtle` meets is what makes an empty field read as a filled one.
+
+That exception is only defensible while the placeholder is a supplementary example of a value and
+never the field's only identification, so **a control using it must carry an accessible name of its
+own** — a real `label`, or an `aria-label` where the design has no visible label. Check that before
+reaching for the token. Where the placeholder is a standing instruction that no value ever replaces,
+as on the read-only attribute file field, it is not an example and keeps `content-subtle`.
+
+Use `placeholder-content-hint` for placeholder text — never `content-subtle` with an opacity
+modifier, which puts the same decision somewhere the token parser cannot see it.
+
+### Charts
+
+The dashboard charts plot counts, so their value axis must be a whole-number axis. Recharts divides
+a small automatic domain into fractional ticks, and formatting those ticks as integers collapses
+them into duplicate labels — a maximum of two signings renders as `0 1 1 2 2`. A count axis
+therefore sets `allowDecimals={false}` and takes its domain from `countAxisDomain` in
+`src/utils/chart-axis.ts`, which pins the top to the highest count while the domain is too narrow
+for recharts to step in whole numbers. Rounding the tick labels instead is what causes the
+duplicates, so a count axis carries no `tickFormatter`.
+
+### Code Style
+
+Biome enforces linting and formatting: 4-space indent, 140-char line width, single quotes, trailing commas everywhere, semicolons required. Suppress rules only with a justified `biome-ignore` comment.
+
+## Git & Pull Requests
+
+- Do NOT put a PR number or issue number in the PR title. Describe the change itself. (Referencing the issue in the PR body, e.g. "Closes #NNNN", is fine.)
+- DO write the PR description by hand. Describe only what the change does, factual and properly markdown formatted. No AI or assistant attribution, no follow-up/task/plan sections, and no unrelated context such as links to other pull requests. An empty body stays empty — nothing backfills it.
+
+## CI Workflows
+
+Container builds call first-party reusable workflows from `OmniTrustILM/.github`, referenced as
+`@main` on purpose: edits there are meant to reach every repo without a version bump here.
+
+| Workflow | Trigger | Reusable workflow | Result |
+|---|---|---|---|
+| `publish_docker.yaml` | push to `main`, tags | `containers-build-and-push.yml` | `ilm/frontend-administrator` |
+| `test_docker_image.yaml` | pull request | `containers-test.yml` | builds and scans, pushes nothing |
+| `build_preview_docker.yml` | `workflow_dispatch` | `containers-build-and-push.yml` | `ilm-preview/frontend-administrator` |
+
+### Preview image pipeline
+
+A preview image cannot be built on `pull_request`, because a fork PR has no access to registry
+credentials. Three workflows relay the context instead:
+
+1. `prepare_preview.yml` — `pull_request`, gated on the `preview` label. Writes `pr-context.json`
+   (`pr_number`, `head_sha`, `head_repo`, `head_branch`, `base_ref`) as an artifact. A fork PR runs
+   this file from its own head, so the gate here is an optimisation, not the authorisation.
+2. `dispatch-preview-docker.yml` — `workflow_run` on the above. Has secrets, and carries the
+   authorisation. It accepts only `pr_number` from the artifact, then re-reads the PR through the
+   API: the PR must be open and carry the `preview` label, and its head repository and branch must
+   match the triggering run, so a forged number cannot drive another PR's builds. A head SHA that
+   has moved on skips, because the push that moved it starts its own run. Every dispatch input comes
+   from that API response, and the build is dispatched on the default branch rather than on
+   `base_ref`, so a base branch cannot supply its own copy of the build workflow.
+3. `build_preview_docker.yml` — `workflow_dispatch`. Calls the reusable workflow with
+   `ref: <head_sha>`, and reports a `Docker preview build` check against that commit because a
+   dispatched run does not attach to the PR on its own.
+
+`dispatch-sonar.yml` reads a `pr-context.json` of the same shape, written by `tests.yml` (see
+[Tests and Sonar](#tests-and-sonar)).
+
+Passing the head SHA works for a fork PR because fork objects live in this repository's network, so
+`actions/checkout` resolves them without a `repository` override. Pinning the commit rather than the
+branch also keeps the published tag honest when a push lands mid-run.
+
+The preview call passes `sign: false` and `push-readme: false`: a preview is not a release, so it
+carries no cosign signature and must not overwrite the registry README from a fork branch. It also
+overrides `tag-rules` with a single `pr-<number>-<sha>` tag, because the default rules would publish
+rolling `develop-latest` and `develop-<sha>` tags onto the preview path.
+
+Trivy gates the preview build under the org-default policy. Per-architecture images are pushed by
+digest before the scan runs, so a PR introducing a CRITICAL or HIGH vulnerability still leaves those
+digests in the registry — but no `pr-<number>-<sha>` tag or multiarch manifest is published.
+`test_docker_image.yaml` already fails that same PR.
+
+### Tests and Sonar
+
+`tests.yml` (`Tests`) runs Vitest and the Playwright component tests. The Playwright suite runs in
+shards: with `PW_SHARDED=1`, `playwright-ct.config.ts` writes a blob report and raw V8 coverage
+instead of its usual reports. `test (chromium)` and `test cross-browser` merge the shards into one
+report per browser. For chromium, `scripts/merge-playwright-coverage.js` also merges the raw
+coverage, applying the same coverage options (`scripts/playwright-coverage.js`) as an unsharded
+run. `test (chromium)` is a required status check, so its job name must not change. PRs run
+chromium only; main adds firefox and webkit.
+
+Sonar never runs the tests. For a PR, `dispatch-sonar.yml` (`workflow_run` on `Tests`) takes only
+the PR number from that run's `pr-context.json`, binds the PR to the run through the API, and
+dispatches `sonar.yml` on the default branch with the API's values.
+`sonar.yml` holds `SONAR_TOKEN` and the Sonar App key, so it executes no code from the PR: it
+verifies the run and the PR through the API, downloads the coverage artifacts outside the
+workspace, checks out the PR head and scans. Main is analysed by the `sonar-main` job in
+`tests.yml`.
+
+Sonar's TypeScript rules need the libraries' types, but neither Sonar job installs dependencies.
+The `Vitest` job uploads the declaration files from its `npm ci` (`*.ts`, `*.mts`, `*.cts` and
+each package's `package.json`) as `node-types`, and both Sonar jobs download them into
+`<workspace>/../node_modules`, where TypeScript resolves modules from. Without them those rules
+see `any` and report nothing.
+
+## Environment Variables (Runtime)
+
+Injected via `window.__ENV__` at runtime (not build time):
+
+- `API_URL` — Backend API base URL
+- `LOGIN_URL`, `LOGOUT_URL` — Auth endpoints
+- `BASE_URL` — App base path (used in Docker deployments)

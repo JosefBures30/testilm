@@ -1,0 +1,118 @@
+import { getEnumLabel } from 'ducks/enums';
+import Badge from 'components/Badge';
+import type { SearchFieldListModel, SearchFieldModel } from 'types/certificate';
+import type { EnumItemDto } from 'types/enums';
+import { AttributeContentType, type ConditionItemDto, type FilterConditionOperator, FilterFieldType } from 'types/openapi';
+import { checkIfFieldOperatorIsInterval, checkIfFieldTypeIsDate, getFormattedDate, getFormattedDateTime } from 'utils/dateUtil';
+import { getInputStringFromIso8601String } from 'utils/duration';
+
+type RenderVariant = 'badge' | 'small';
+
+export const findConditionField = (availableFilters: SearchFieldListModel[], condition: ConditionItemDto): SearchFieldModel | undefined =>
+    availableFilters
+        .find((a) => a.filterFieldSource === condition.fieldSource)
+        ?.searchFieldData?.find((s) => s.fieldIdentifier === condition.fieldIdentifier);
+
+type RenderConditionItemsOptions = {
+    className: string;
+    variant?: RenderVariant;
+    style?: React.CSSProperties;
+};
+
+export const renderConditionItems = (
+    conditionItems: ConditionItemDto[],
+    availableFilters: SearchFieldListModel[],
+    platformEnums: Record<string, Record<string, { label: string }>>,
+    searchGroupEnum: Record<string, EnumItemDto>,
+    filterConditionOperatorEnum: Record<string, EnumItemDto>,
+    options: RenderConditionItemsOptions,
+) => {
+    const { className, variant = 'badge', style } = options;
+    const formatSingleValue = (
+        v: unknown,
+        field: SearchFieldModel | undefined,
+        platformEnums: Record<string, Record<string, { label: string }>>,
+        operator: FilterConditionOperator,
+    ): string => {
+        if (field?.platformEnum) {
+            const key = String(v);
+            return platformEnums[field.platformEnum][key]?.label ?? key;
+        }
+
+        if (checkIfFieldTypeIsDate(field?.type) && checkIfFieldOperatorIsInterval(operator)) {
+            return getInputStringFromIso8601String(String(v)) || String(v);
+        }
+
+        if (field?.attributeContentType === AttributeContentType.Date) {
+            return getFormattedDate(v as string);
+        }
+
+        if (field?.attributeContentType === AttributeContentType.Datetime || field?.type === FilterFieldType.Datetime) {
+            return getFormattedDateTime(v as string);
+        }
+
+        if (typeof v === 'object' && v !== null && 'name' in v) {
+            return String((v as { name: unknown }).name);
+        }
+
+        return String(v);
+    };
+
+    const getConditionValue = (
+        condition: ConditionItemDto,
+        field: SearchFieldModel | undefined,
+        platformEnums: Record<string, Record<string, { label: string }>>,
+    ): string => {
+        const booleanOptions = [
+            { label: 'True', value: true },
+            { label: 'False', value: false },
+        ];
+
+        if (field?.type === FilterFieldType.Boolean) {
+            return `'${booleanOptions.find((b) => !!condition.value === b.value)?.label}'`;
+        }
+
+        if (Array.isArray(condition.value)) {
+            return condition.value.map((v) => `'${formatSingleValue(v, field, platformEnums, condition.operator)}'`).join(' OR ');
+        }
+
+        // Zero and false are values; only an item without one, as under an "is empty" operator, shows none.
+        const value: unknown = condition.value;
+        if (value === undefined || value === null || value === '') {
+            return '';
+        }
+        return `'${formatSingleValue(value, field, platformEnums, condition.operator)}'`;
+    };
+
+    return conditionItems.map((condition, i) => {
+        const field = findConditionField(availableFilters, condition);
+
+        const label = field ? field.fieldLabel : condition.fieldIdentifier;
+        const value = getConditionValue(condition, field, platformEnums);
+
+        const title = `${getEnumLabel(searchGroupEnum, condition.fieldSource)} ${label} ${getEnumLabel(
+            filterConditionOperatorEnum,
+            condition.operator,
+        )} ${value}`;
+
+        if (variant === 'badge') {
+            return (
+                <Badge key={condition.fieldIdentifier} title={title} className={className} style={style}>
+                    {getEnumLabel(searchGroupEnum, condition.fieldSource)}&nbsp;'{label}'&nbsp;
+                    {getEnumLabel(filterConditionOperatorEnum, condition.operator)}&nbsp;
+                    {value}
+                </Badge>
+            );
+        }
+
+        return (
+            <div key={condition.fieldIdentifier} className="mt-2 mr-1" style={style}>
+                <span title={title} className={className}>
+                    {getEnumLabel(searchGroupEnum, condition.fieldSource)}&nbsp;'{label}'&nbsp;
+                    {getEnumLabel(filterConditionOperatorEnum, condition.operator)}&nbsp;
+                    {value}
+                </span>
+            </div>
+        );
+    });
+};

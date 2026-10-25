@@ -1,0 +1,278 @@
+import { test, expect } from '../../../../../playwright/ct-test';
+import { testInitialState } from 'ducks/test-reducers';
+import type { AttributeDescriptorModel } from 'types/attributes';
+import { AttributeContentType, AttributeType, CertificateRegistrationState } from 'types/openapi';
+import {
+    csrAttributesState,
+    type DispatchedAction,
+    existingKeyState,
+    fillCommonNameAndClearSan,
+    onlyCommonNameSubmitted,
+    selectExistingKey,
+    submittedCsrAttributes,
+} from '../../test-utils/blankRequestAttribute';
+import { CompleteRegisteredDialogTestWrapper } from './CompleteRegisteredDialogTestWrapper';
+
+const csrDataDescriptor: AttributeDescriptorModel = {
+    type: AttributeType.Data,
+    name: 'dataField',
+    uuid: 'csr-data-uuid-1',
+    contentType: AttributeContentType.String,
+    properties: { label: 'Data Field', required: false, readOnly: false, visible: true, list: false, multiSelect: false },
+} as AttributeDescriptorModel;
+
+test.describe('CompleteRegisteredDialog', () => {
+    test('renders the Challenge input and CSR upload input', async ({ mount, page }) => {
+        await mount(<CompleteRegisteredDialogTestWrapper />);
+
+        await expect(page.locator('#completeAuthorizationSecret')).toBeVisible();
+        await expect(page.locator('#completeAuthorizationSecret')).toHaveAttribute('type', 'password');
+        await expect(page.locator('#completeCsrUpload__fileUpload__fileContent')).toBeVisible();
+    });
+
+    test('submit is disabled until both challenge and CSR content are provided', async ({ mount, page }) => {
+        await mount(<CompleteRegisteredDialogTestWrapper />);
+
+        const submitButton = page.getByTestId('completeRegisteredSubmit');
+        await expect(submitButton).toBeDisabled();
+
+        await page.locator('#completeAuthorizationSecret').fill('super-secret-challenge');
+        await expect(submitButton).toBeDisabled();
+
+        await page.locator('#completeCsrUpload__fileUpload__fileContent').fill('LS0tLS1CRUdJTi=');
+        await expect(submitButton).toBeEnabled();
+    });
+
+    test('Challenge is required when the certificate was pre-registered with one', async ({ mount, page }) => {
+        await mount(<CompleteRegisteredDialogTestWrapper />);
+
+        await expect(page.getByTestId('label-completeAuthorizationSecret')).toContainText('Challenge');
+        await expect(page.getByTestId('label-completeAuthorizationSecret').locator('.text-danger')).toBeVisible();
+    });
+
+    test('Challenge is absent for a certificate pre-registered without one', async ({ mount, page }) => {
+        await mount(<CompleteRegisteredDialogTestWrapper challenged={false} />);
+
+        await expect(page.locator('#completeAuthorizationSecret')).toHaveCount(0);
+        await expect(page.locator('#completeCsrUpload__fileUpload__fileContent')).toBeVisible();
+    });
+
+    test('submit needs only CSR content when the certificate has no challenge', async ({ mount, page }) => {
+        await mount(<CompleteRegisteredDialogTestWrapper challenged={false} />);
+
+        const submitButton = page.getByTestId('completeRegisteredSubmit');
+        await expect(submitButton).toBeDisabled();
+
+        await page.locator('#completeCsrUpload__fileUpload__fileContent').fill('LS0tLS1CRUdJTi=');
+        await expect(submitButton).toBeEnabled();
+    });
+
+    test('unchallenged certificate keeps submit reachable on the existing-key path too', async ({ mount, page }) => {
+        await mount(
+            <CompleteRegisteredDialogTestWrapper
+                challenged={false}
+                preloadedState={{
+                    tokenprofiles: { tokenProfiles: [{ uuid: 'token-profile-uuid', name: 'Test Token Profile' }] } as any,
+                }}
+            />,
+        );
+
+        await page.getByTestId('completeKeySource-trigger').click();
+        await page.getByRole('option', { name: 'Existing Key' }).click();
+
+        await expect(page.locator('#completeAuthorizationSecret')).toHaveCount(0);
+        // Still gated on the key selection — dropping the challenge must not drop the other requirements.
+        await expect(page.getByTestId('completeRegisteredSubmit')).toBeDisabled();
+    });
+
+    test('Challenge is absent once the registration is no longer Active', async ({ mount, page }) => {
+        // Core verifies the secret only for an Active row; asking for one on a Closed registration would
+        // make the operator invent a value Core discards.
+        await mount(<CompleteRegisteredDialogTestWrapper registrationState={CertificateRegistrationState.Closed} />);
+
+        await expect(page.locator('#completeAuthorizationSecret')).toHaveCount(0);
+
+        await page.locator('#completeCsrUpload__fileUpload__fileContent').fill('LS0tLS1CRUdJTi=');
+        await expect(page.getByTestId('completeRegisteredSubmit')).toBeEnabled();
+    });
+
+    test('completeRegisteredCertificate payload carries the typed challenge for a challenged certificate', async ({ mount, page }) => {
+        const dispatched: { type: string; payload?: any }[] = [];
+
+        await mount(<CompleteRegisteredDialogTestWrapper onAction={(a) => dispatched.push(a)} />);
+
+        await page.locator('#completeAuthorizationSecret').fill('super-secret-challenge');
+        await page.locator('#completeCsrUpload__fileUpload__fileContent').fill('LS0tLS1CRUdJTi=');
+        await page.getByTestId('completeRegisteredSubmit').click();
+
+        await expect.poll(() => dispatched.find((a) => a.type === 'certificates/completeRegisteredCertificate')).toBeTruthy();
+        const action = dispatched.find((a) => a.type === 'certificates/completeRegisteredCertificate');
+        expect(action?.payload.authorizationSecret).toBe('super-secret-challenge');
+    });
+
+    test('completeRegisteredCertificate payload omits authorizationSecret for an unchallenged certificate', async ({ mount, page }) => {
+        const dispatched: { type: string; payload?: any }[] = [];
+
+        await mount(<CompleteRegisteredDialogTestWrapper challenged={false} onAction={(a) => dispatched.push(a)} />);
+
+        await page.locator('#completeCsrUpload__fileUpload__fileContent').fill('LS0tLS1CRUdJTi=');
+        await page.getByTestId('completeRegisteredSubmit').click();
+
+        await expect.poll(() => dispatched.find((a) => a.type === 'certificates/completeRegisteredCertificate')).toBeTruthy();
+        const action = dispatched.find((a) => a.type === 'certificates/completeRegisteredCertificate');
+        // RHF retains an unmounted field's value, so the hasChallenge ternary — not the missing input —
+        // is what keeps a stale secret out of the request.
+        expect(action?.payload.authorizationSecret).toBeUndefined();
+    });
+
+    test('key-source toggle switches between CSR upload and existing-key selectors', async ({ mount, page }) => {
+        await mount(<CompleteRegisteredDialogTestWrapper />);
+
+        // Default (Upload CSR): CSR input visible, token-profile/key selectors absent.
+        await expect(page.locator('#completeCsrUpload__fileUpload__fileContent')).toBeVisible();
+        await expect(page.getByTestId('select-tokenProfileUuid-trigger')).toHaveCount(0);
+
+        await page.getByTestId('completeKeySource-trigger').click();
+        await page.getByRole('option', { name: 'Existing Key' }).click();
+
+        // Existing key: token-profile selector visible, CSR input hidden. Key selector stays hidden
+        // until a token profile is chosen (RenderRequestKey renders null with no selection).
+        await expect(page.locator('#completeCsrUpload__fileUpload__fileContent')).toHaveCount(0);
+        await expect(page.getByTestId('select-tokenProfileUuid-trigger')).toBeVisible();
+        await expect(page.getByTestId('select-keyUuid-trigger')).toHaveCount(0);
+
+        // Challenge stays required and write-only in this mode too.
+        await expect(page.locator('#completeAuthorizationSecret')).toHaveAttribute('type', 'password');
+        await expect(page.getByTestId('completeRegisteredSubmit')).toBeDisabled();
+    });
+
+    test('selecting a token profile in existing-key mode reveals the key selector', async ({ mount, page }) => {
+        await mount(
+            <CompleteRegisteredDialogTestWrapper
+                preloadedState={{
+                    tokenprofiles: { tokenProfiles: [{ uuid: 'token-profile-uuid', name: 'Test Token Profile' }] } as any,
+                }}
+            />,
+        );
+
+        await page.getByTestId('completeKeySource-trigger').click();
+        await page.getByRole('option', { name: 'Existing Key' }).click();
+
+        await page.getByTestId('select-tokenProfileUuid-trigger').click();
+        await page.getByRole('option', { name: 'Test Token Profile' }).click();
+
+        await expect(page.getByTestId('select-keyUuid-trigger')).toBeVisible();
+    });
+
+    test('fetches token profiles on mount so the dropdown offers more than "+ Add new"', async ({ mount, page }) => {
+        await mount(
+            <CompleteRegisteredDialogTestWrapper tokenProfilesOnFetch={[{ uuid: 'fetched-uuid', name: 'Fetched Token Profile' }]} />,
+        );
+
+        await page.getByTestId('completeKeySource-trigger').click();
+        await page.getByRole('option', { name: 'Existing Key' }).click();
+
+        await page.getByTestId('select-tokenProfileUuid-trigger').click();
+        await expect(page.getByRole('option', { name: 'Fetched Token Profile' })).toBeVisible();
+    });
+
+    test('keeps the modal open after submitting instead of closing optimistically', async ({ mount, page }) => {
+        await mount(<CompleteRegisteredDialogTestWrapper />);
+
+        await page.locator('#completeAuthorizationSecret').fill('super-secret-challenge');
+        await page.locator('#completeCsrUpload__fileUpload__fileContent').fill('LS0tLS1CRUdJTi=');
+        await page.getByTestId('completeRegisteredSubmit').click();
+
+        // The dialog must not close on submit — closing happens only on success (via redirect) or cancel.
+        await expect(page.getByTestId('dialog-closed')).toHaveCount(0);
+        await expect(page.locator('#completeAuthorizationSecret')).toBeVisible();
+        await expect(page.locator('#completeAuthorizationSecret')).toHaveValue('super-secret-challenge');
+    });
+
+    test('closes explicitly on a confirmed success instead of relying on the redirect', async ({ mount, page }) => {
+        // Start mid-request; when isIssuing flips false with no error the completion succeeded and the
+        // dialog must close itself — the success redirect is a same-URL no-op when the issued certificate
+        // keeps the pre-registration uuid, so it cannot be relied on to unmount the dialog.
+        await mount(
+            <CompleteRegisteredDialogTestWrapper
+                preloadedState={{ certificates: { ...testInitialState.certificates, isIssuing: true } }}
+            />,
+        );
+
+        await expect(page.getByTestId('dialog-closed')).toHaveCount(0);
+
+        await page.getByTestId('simulate-success').click();
+
+        // The wrapper swaps the dialog body for an (empty) dialog-closed marker once onCancel fires.
+        await expect(page.getByTestId('dialog-closed')).toBeAttached();
+        await expect(page.getByTestId('completeRegisteredSubmit')).toHaveCount(0);
+    });
+
+    test('surfaces the backend error inline when completion fails', async ({ mount, page }) => {
+        await mount(
+            <CompleteRegisteredDialogTestWrapper
+                preloadedState={{
+                    certificates: { ...testInitialState.certificates, issueErrorMessage: 'Invalid authorization secret' },
+                }}
+            />,
+        );
+
+        const errorPanel = page.getByTestId('completeRegisteredError');
+        await expect(errorPanel).toBeVisible();
+        await expect(errorPanel).toContainText('Invalid authorization secret');
+    });
+
+    test('disables the Complete button and shows progress while issuing', async ({ mount, page }) => {
+        await mount(
+            <CompleteRegisteredDialogTestWrapper
+                preloadedState={{ certificates: { ...testInitialState.certificates, isIssuing: true } }}
+            />,
+        );
+
+        await page.locator('#completeAuthorizationSecret').fill('super-secret-challenge');
+        await page.locator('#completeCsrUpload__fileUpload__fileContent').fill('LS0tLS1CRUdJTi=');
+
+        const submitButton = page.getByTestId('completeRegisteredSubmit');
+        await expect(submitButton).toBeDisabled();
+        await expect(submitButton).toContainText('Completing');
+    });
+
+    test('existing-key path renders the resolved request-attribute descriptors as fields', async ({ mount, page }) => {
+        // The dialog loads the RA profile's request attributes (getCsrAttributes) and, on the existing-key
+        // path, renders them so the backend can build the CSR from the selected key plus this identity.
+        await mount(
+            <CompleteRegisteredDialogTestWrapper
+                preloadedState={{
+                    certificates: { ...testInitialState.certificates, csrAttributeDescriptors: [csrDataDescriptor] },
+                }}
+            />,
+        );
+
+        // Not shown on the CSR-upload (default) path.
+        await expect(page.getByTestId('text-input-__attributes__csrAttributes__.dataField')).toHaveCount(0);
+
+        await page.getByTestId('completeKeySource-trigger').click();
+        await page.getByRole('option', { name: 'Existing Key' }).click();
+
+        await expect(page.getByTestId('text-input-__attributes__csrAttributes__.dataField')).toBeVisible({ timeout: 15000 });
+    });
+
+    test('completeRegisteredCertificate payload omits a request attribute whose default was cleared', async ({ mount, page }) => {
+        const dispatched: DispatchedAction[] = [];
+        await mount(
+            <CompleteRegisteredDialogTestWrapper
+                challenged={false}
+                onAction={(a) => dispatched.push(a)}
+                preloadedState={{ ...csrAttributesState, ...existingKeyState }}
+            />,
+        );
+
+        await selectExistingKey(page, 'completeKeySource');
+        await fillCommonNameAndClearSan(page);
+        await page.getByTestId('completeRegisteredSubmit').click();
+
+        // Core builds the CSR from these attributes and must match it to the registered identity.
+        const submitted = await submittedCsrAttributes(dispatched, 'certificates/completeRegisteredCertificate', (p) => p.csrAttributes);
+        expect(submitted).toEqual(onlyCommonNameSubmitted);
+    });
+});

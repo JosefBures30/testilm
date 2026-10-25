@@ -1,0 +1,18 @@
+{
+  "name": "ejbca-ca-instance3",
+  "connectorUuid": "24fd52e9-5e2a-480c-b5ff-450d7d8a184a",
+  "kind": "Ejbca",
+  "attributes": [
+    {
+      "name": "url",
+      "value": "https://lab01.3key.company:8453/ejbca/ejbcaws/ejbcaws?wsdl"
+    },
+    {
+      "name": "credential",
+      "value": {
+        "uuid": "c8f3654b-3a9b-4701-b011-a5858b1e10d4",
+        "name": "dš-credential-ejbca"
+      }
+    }
+  ]
+}

@@ -1,0 +1,424 @@
+import Widget from 'components/Widget';
+import { actions, selectors } from 'ducks/oids';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useDispatch, useSelector } from 'react-redux';
+import { type CustomOidEntryRequestDto, ExtensionValueEncoding, type OidCategory, PlatformEnum } from 'types/openapi';
+import { Controller, FormProvider, useForm, useWatch } from 'react-hook-form';
+import { validateLength, validateRequired, validateOid, validateOidCode } from 'utils/validators';
+import { buildValidationRules, getFieldErrorMessage } from 'utils/validators-helper';
+import Select from 'components/Select';
+import Switch from 'components/Switch';
+import Button from 'components/Button';
+import Container from 'components/Container';
+import ProgressButton from 'components/ProgressButton';
+import { selectors as enumSelectors, getEnumAsSelectOptions } from 'ducks/enums';
+import MultipleValueTextInput from 'components/Input/MultipleValueTextInput';
+import TextInput from 'components/TextInput';
+import TextArea from 'components/TextArea';
+import Label from 'components/Label';
+import {
+    isCertificateExtensionCategory,
+    isRdnAttributeTypeCategory,
+    isRdnProperties,
+    isCertificateExtensionProperties,
+    getExtensionValueEncodingOptions,
+    buildOidAdditionalProperties,
+} from 'utils/oid';
+
+const VALUE_SCHEMA_EXAMPLE = `Demo DEFINITIONS IMPLICIT TAGS ::= BEGIN
+ServiceEntitlement ::= SEQUENCE {
+    serviceId  UTF8String (SIZE (5..32)),
+    tier       INTEGER (1..3) }
+END`;
+
+type CustomOIDFormProps = Readonly<{
+    oidId?: string;
+    onCancel: () => void;
+    onSuccess?: () => void;
+}>;
+
+interface FormValues {
+    oid: string;
+    displayName: string;
+    description: string;
+    category: string;
+    code?: string;
+    alternativeCode?: string[];
+    defaultCritical?: boolean;
+    valueEncoding?: string;
+    valueSchema?: string;
+}
+
+export default function CustomOIDForm({ oidId, onCancel, onSuccess }: CustomOIDFormProps) {
+    const dispatch = useDispatch();
+
+    const editMode = useMemo(() => !!oidId, [oidId]);
+
+    const oidSelector = useSelector(selectors.oid);
+    const isFetching = useSelector(selectors.isFetching);
+    const isCreating = useSelector(selectors.isCreating);
+    const isUpdating = useSelector(selectors.isUpdating);
+    const valueSchemaError = useSelector(selectors.valueSchemaError);
+
+    const [oid, setOid] = useState<CustomOidEntryRequestDto>();
+
+    useEffect(() => {
+        if (editMode && oidId) {
+            dispatch(actions.getOID({ oid: oidId }));
+        }
+    }, [dispatch, editMode, oidId]);
+
+    useEffect(() => {
+        if (editMode && oidSelector?.oid === oidId) {
+            setOid(oidSelector);
+        }
+    }, [dispatch, editMode, oidId, oidSelector]);
+
+    const isBusy = useMemo(() => isFetching || isCreating || isUpdating, [isFetching, isCreating, isUpdating]);
+
+    const submitTitle = useMemo(() => (editMode ? 'Save' : 'Create'), [editMode]);
+
+    const inProgressTitle = useMemo(() => (editMode ? 'Saving...' : 'Creating...'), [editMode]);
+
+    const oidCategoryEnum = useSelector(enumSelectors.platformEnum(PlatformEnum.OidCategory));
+
+    const [categoryList, setCategoryList] = useState<{ label: string; value: OidCategory; description?: string }[]>([]);
+
+    useEffect(() => {
+        if (oidCategoryEnum)
+            setCategoryList(
+                getEnumAsSelectOptions(oidCategoryEnum).map(({ value, label, description }) => ({
+                    label,
+                    value: value as OidCategory,
+                    description,
+                })),
+            );
+    }, [oidCategoryEnum]);
+
+    const defaultValues: FormValues = useMemo(() => {
+        const categoryValue = oid?.category ? oid.category : '';
+        const props = oid?.additionalProperties;
+        const rdnProps = isRdnProperties(props) ? props : undefined;
+        const extProps = isCertificateExtensionProperties(props) ? props : undefined;
+
+        return {
+            oid: editMode ? oid?.oid || '' : '',
+            displayName: editMode ? oid?.displayName || '' : '',
+            description: editMode ? oid?.description || '' : '',
+            category: categoryValue,
+            code: editMode ? rdnProps?.code : undefined,
+            alternativeCode: editMode ? rdnProps?.altCodes : undefined,
+            defaultCritical: editMode ? (extProps?.defaultCritical ?? false) : false,
+            valueEncoding: editMode ? extProps?.valueEncoding : undefined,
+            valueSchema: editMode ? extProps?.valueSchema : undefined,
+        };
+    }, [oid, editMode]);
+
+    const methods = useForm<FormValues>({
+        defaultValues,
+        mode: 'onChange',
+        // Unregister the fields of the previously-selected category when switching so a hidden,
+        // empty required field (e.g. RDN `code` vs CertExt `valueEncoding`) does not keep isValid false.
+        shouldUnregister: true,
+    });
+
+    const {
+        handleSubmit,
+        control,
+        reset,
+        setError,
+        formState: { isDirty, isSubmitting, isValid },
+    } = methods;
+
+    // Core is the only reader of the ASN.1 module, so its refusal is the field's validation error.
+    // Only the refusal of this form's own latest submission: a request still running when a form
+    // closed can fail after another form has opened and submitted, and that form must not show it.
+    const requestIdRef = useRef<string | undefined>(undefined);
+    useEffect(() => {
+        const isOwn = requestIdRef.current !== undefined && valueSchemaError?.requestId === requestIdRef.current;
+        if (isOwn) setError('valueSchema', { type: 'server', message: valueSchemaError.message }, { shouldFocus: true });
+    }, [valueSchemaError, setError]);
+
+    useEffect(() => {
+        if (editMode && oid) {
+            reset(defaultValues);
+        }
+    }, [oid, reset, defaultValues, editMode]);
+
+    const watchedCategory = useWatch({
+        control,
+        name: 'category',
+    });
+
+    const watchedValueEncoding = useWatch({
+        control,
+        name: 'valueEncoding',
+    });
+
+    const onSubmit = useCallback(
+        (values: FormValues) => {
+            const requestId = crypto.randomUUID();
+            requestIdRef.current = requestId;
+            const additionalProperties = buildOidAdditionalProperties(values.category, values);
+            const newOID = {
+                oid: values.oid,
+                displayName: values.displayName,
+                description: values.description,
+                category: values.category as OidCategory,
+                ...(additionalProperties && { additionalProperties }),
+            };
+            if (editMode) {
+                dispatch(actions.updateOID({ oid: oidId!, data: newOID, requestId }));
+            } else {
+                dispatch(actions.createOID({ oid: newOID, requestId }));
+            }
+        },
+        [dispatch, editMode, oidId],
+    );
+
+    return (
+        <FormProvider {...methods}>
+            <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+                {/* The overlay keeps the form as submitted while its request runs: an edit meanwhile
+                    would let the reply land on a value, or a field, no longer on screen. */}
+                <Widget noBorder busy={isBusy} enableBusyOverlay innerContainerProps={isBusy ? { inert: true } : undefined}>
+                    <div className="space-y-4">
+                        <Controller
+                            name="oid"
+                            control={control}
+                            rules={buildValidationRules([validateRequired(), validateOid()])}
+                            render={({ field, fieldState }) => (
+                                <>
+                                    <TextInput
+                                        {...field}
+                                        id="oid"
+                                        type="text"
+                                        label="OID"
+                                        required
+                                        placeholder="e.g. 1.2.840.113549.1.1.11"
+                                        disabled={editMode}
+                                        invalid={fieldState.error && fieldState.isTouched}
+                                        error={getFieldErrorMessage(fieldState)}
+                                    />
+                                    {!(fieldState.error && fieldState.isTouched) && (
+                                        <p className="mt-1 text-xs text-content-subtle">
+                                            Dot-separated numeric format, starting with 0, 1, or 2
+                                        </p>
+                                    )}
+                                </>
+                            )}
+                        />
+                        <Controller
+                            name="displayName"
+                            control={control}
+                            rules={buildValidationRules([validateRequired()])}
+                            render={({ field, fieldState }) => (
+                                <TextInput
+                                    {...field}
+                                    id="displayName"
+                                    type="text"
+                                    label="Display Name"
+                                    required
+                                    placeholder="Enter the Display name"
+                                    invalid={fieldState.error && fieldState.isTouched}
+                                    error={getFieldErrorMessage(fieldState)}
+                                />
+                            )}
+                        />
+                        <Controller
+                            name="description"
+                            control={control}
+                            rules={buildValidationRules([validateLength(0, 300)])}
+                            render={({ field, fieldState }) => (
+                                <TextArea
+                                    {...field}
+                                    id="description"
+                                    label="Description"
+                                    rows={3}
+                                    placeholder="Enter Description / Comment"
+                                    invalid={fieldState.error && fieldState.isTouched}
+                                    error={getFieldErrorMessage(fieldState)}
+                                />
+                            )}
+                        />
+                        <Controller
+                            name="category"
+                            control={control}
+                            rules={buildValidationRules([validateRequired()])}
+                            render={({ field, fieldState }) => (
+                                <>
+                                    <Select
+                                        id="categorySelect"
+                                        label="Select Category"
+                                        value={field.value || ''}
+                                        onChange={(value) => {
+                                            field.onChange(value);
+                                        }}
+                                        options={categoryList.map((c) => ({ value: c.value, label: c.label, description: c.description }))}
+                                        placeholder="Select Category"
+                                        isDisabled={editMode}
+                                        placement="bottom"
+                                        showOptionDescriptionInDropdown
+                                        showSelectedDescriptionAsHelp
+                                    />
+                                    {fieldState.error && fieldState.isTouched && (
+                                        <p className="mt-1 text-sm text-danger">
+                                            {typeof fieldState.error === 'string'
+                                                ? fieldState.error
+                                                : fieldState.error?.message || 'Invalid value'}
+                                        </p>
+                                    )}
+                                </>
+                            )}
+                        />
+
+                        {isRdnAttributeTypeCategory(watchedCategory) && (
+                            <>
+                                <Controller
+                                    name="code"
+                                    control={control}
+                                    rules={buildValidationRules([validateRequired(), validateOidCode()])}
+                                    render={({ field, fieldState }) => (
+                                        <TextInput
+                                            {...field}
+                                            id="code"
+                                            type="text"
+                                            label="OID code"
+                                            required
+                                            placeholder="Enter OID code"
+                                            invalid={fieldState.error && fieldState.isTouched}
+                                            error={getFieldErrorMessage(fieldState)}
+                                        />
+                                    )}
+                                />
+
+                                <Label htmlFor="alternativeCode">Alternative Code</Label>
+                                <Controller
+                                    name="alternativeCode"
+                                    control={control}
+                                    rules={buildValidationRules([validateOidCode()])}
+                                    render={({ field, fieldState }) => (
+                                        <>
+                                            <MultipleValueTextInput
+                                                id="alternativeCode"
+                                                selectedValues={field.value || []}
+                                                onValuesChange={field.onChange}
+                                                placeholder="Select or add alternative codes"
+                                                addPlaceholder="Add code"
+                                                initialOptions={
+                                                    editMode &&
+                                                    isRdnProperties(oid?.additionalProperties) &&
+                                                    oid.additionalProperties.altCodes
+                                                        ? oid.additionalProperties.altCodes.map((code) => ({
+                                                              label: code,
+                                                              value: code,
+                                                          }))
+                                                        : []
+                                                }
+                                            />
+                                            {fieldState.error && fieldState.isTouched && (
+                                                <p className="mt-1 text-sm text-danger">
+                                                    {typeof fieldState.error === 'string'
+                                                        ? fieldState.error
+                                                        : fieldState.error?.message || 'Invalid value'}
+                                                </p>
+                                            )}
+                                        </>
+                                    )}
+                                />
+                            </>
+                        )}
+
+                        {isCertificateExtensionCategory(watchedCategory) && (
+                            <>
+                                <Controller
+                                    name="defaultCritical"
+                                    control={control}
+                                    render={({ field }) => (
+                                        <Switch
+                                            id="defaultCritical"
+                                            label="Default Critical"
+                                            checked={field.value ?? false}
+                                            onChange={field.onChange}
+                                        />
+                                    )}
+                                />
+                                <Controller
+                                    name="valueEncoding"
+                                    control={control}
+                                    rules={buildValidationRules([validateRequired()])}
+                                    render={({ field, fieldState }) => (
+                                        <>
+                                            <Select
+                                                id="valueEncodingSelect"
+                                                label="Value Encoding"
+                                                required
+                                                value={field.value || ''}
+                                                onChange={(value) => field.onChange(value)}
+                                                options={getExtensionValueEncodingOptions()}
+                                                placeholder="Select Value Encoding"
+                                                placement="bottom"
+                                            />
+                                            {fieldState.error && fieldState.isTouched && (
+                                                <p className="mt-1 text-sm text-danger">
+                                                    {typeof fieldState.error === 'string'
+                                                        ? fieldState.error
+                                                        : fieldState.error?.message || 'Invalid value'}
+                                                </p>
+                                            )}
+                                        </>
+                                    )}
+                                />
+                                {/* valueSchema is only applicable when valueEncoding is DER (contract
+                                    @AssertTrue) — hidden for the other encodings so the operator can
+                                    never hit that rejection; shouldUnregister drops a stale value. */}
+                                {watchedValueEncoding === ExtensionValueEncoding.Der && (
+                                    <Controller
+                                        name="valueSchema"
+                                        control={control}
+                                        render={({ field, fieldState }) => (
+                                            <>
+                                                <TextArea
+                                                    {...field}
+                                                    id="valueSchema"
+                                                    label="Value Schema (ASN.1 Module)"
+                                                    rows={6}
+                                                    placeholder={VALUE_SCHEMA_EXAMPLE}
+                                                    invalid={!!fieldState.error}
+                                                    error={fieldState.error?.message}
+                                                />
+                                                {!fieldState.error && (
+                                                    <p className="mt-1 text-xs text-content-subtle" data-testid="valueSchema-hint">
+                                                        Optional. An ASN.1 module whose first type is the extension's value; with one, a
+                                                        value can be written in JER (X.697) instead of base64-encoded DER. Supported:
+                                                        SEQUENCE, SET, SEQUENCE OF, SET OF, CHOICE, tagged types, BOOLEAN, INTEGER, NULL,
+                                                        OCTET STRING, BIT STRING, OBJECT IDENTIFIER, UTF8String, IA5String, PrintableString
+                                                        and GeneralizedTime, with SIZE and value-range constraints. AUTOMATIC TAGS, IMPORTS
+                                                        and extension markers are not supported.
+                                                    </p>
+                                                )}
+                                            </>
+                                        )}
+                                    />
+                                )}
+                            </>
+                        )}
+
+                        <Container className="flex-row justify-end modal-footer" gap={4}>
+                            <Button variant="outline" onClick={onCancel} disabled={isSubmitting} type="button">
+                                Cancel
+                            </Button>
+                            <ProgressButton
+                                title={submitTitle}
+                                inProgressTitle={inProgressTitle}
+                                inProgress={isCreating || isUpdating}
+                                disabled={(editMode ? !isDirty : false) || !isValid}
+                                type="submit"
+                            />
+                        </Container>
+                    </div>
+                </Widget>
+            </form>
+        </FormProvider>
+    );
+}

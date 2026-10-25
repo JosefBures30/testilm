@@ -1,0 +1,73 @@
+const cardClass = 'rounded-xl border border-divider p-4 md:p-5 shadow-2xs bg-surface-raised animate-pulse';
+const barClass = 'rounded bg-surface-sunken';
+
+const legendWidths = ['75%', '55%', '85%', '60%', '70%'];
+
+function CountBadgeSkeleton({ withSwitch = false }: Readonly<{ withSwitch?: boolean }>) {
+    return (
+        <div className={`${cardClass} h-full`} data-testid="count-badge-skeleton">
+            <div className={`${barClass} h-5 w-28 mb-4`} />
+            <div className={`${barClass} h-9 w-20`} />
+            {withSwitch && (
+                <div className="flex items-center gap-2 mt-5" data-testid="switch-skeleton">
+                    <div className={`${barClass} h-4 w-28 rounded-full`} />
+                    <div className={`${barClass} h-7 w-12 rounded-full`} />
+                </div>
+            )}
+        </div>
+    );
+}
+
+function DonutChartSkeleton() {
+    return (
+        <div className={cardClass} data-testid="donut-chart-skeleton">
+            <div className={`${barClass} h-4 w-44 mb-4`} />
+            <div className="grid grid-cols-1 items-center justify-items-center gap-4 md:grid-cols-[100px_minmax(0,1fr)] md:justify-items-stretch">
+                {/* Donut ring */}
+                <div className="h-[90px] w-[90px] rounded-full border-[14px] border-surface-sunken flex-shrink-0" />
+                {/* Legend */}
+                <div
+                    className="flex flex-col gap-4 overflow-hidden w-full ml-auto md:mx-auto"
+                    style={{ height: '180px', maxWidth: '220px' }}
+                >
+                    {legendWidths.map((w) => (
+                        <div key={w} className="flex items-center gap-2">
+                            <div className={`${barClass} h-2 w-2 rounded-full flex-shrink-0`} />
+                            <div className={`${barClass} h-4`} style={{ width: w }} />
+                        </div>
+                    ))}
+                </div>
+            </div>
+        </div>
+    );
+}
+
+type Props = Readonly<{
+    countBadges: number;
+    charts: number;
+    firstBadgeWithSwitch?: boolean;
+}>;
+
+const BADGE_SLOTS = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'] as const;
+const CHART_SLOTS = ['alpha', 'beta', 'gamma', 'delta', 'epsilon', 'zeta', 'eta', 'theta'] as const;
+
+function DashboardSkeleton({ countBadges, charts, firstBadgeWithSwitch = false }: Props) {
+    return (
+        <div>
+            <div className="flex flex-row gap-4 md:gap-8 mb-4 md:mb-8 flex-wrap">
+                {BADGE_SLOTS.slice(0, countBadges).map((slot, i) => (
+                    <div key={`badge-${slot}`} className="flex-1 min-w-[180px]">
+                        <CountBadgeSkeleton withSwitch={i === 0 && firstBadgeWithSwitch} />
+                    </div>
+                ))}
+            </div>
+            <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4 md:gap-8">
+                {CHART_SLOTS.slice(0, charts).map((slot) => (
+                    <DonutChartSkeleton key={`chart-${slot}`} />
+                ))}
+            </div>
+        </div>
+    );
+}
+
+export default DashboardSkeleton;

@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: "{{ include "keystore-entity-provider.fullname" . }}-test-connection"
+  labels:
+    {{- include "keystore-entity-provider.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": test
+spec:
+  containers:
+    - name: curl
+      image: {{ include "keystore-entity-provider.curl.image" . }}
+      command:
+        - /bin/sh
+        - -c
+        - |
+          curl --silent --retry 5 --retry-delay 5 --retry-all-errors keystore-entity-provider-service:{{ .Values.service.port }}/v1
+  restartPolicy: Never

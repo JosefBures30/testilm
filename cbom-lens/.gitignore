@@ -1,0 +1,59 @@
+HELP.md
+target/
+!.mvn/wrapper/maven-wrapper.jar
+!**/src/main/**/target/
+!**/src/test/**/target/
+
+### STS ###
+.apt_generated
+.classpath
+.factorypath
+.project
+.settings
+.springBeans
+.sts4-cache
+
+### IntelliJ IDEA ###
+.idea
+*.iws
+*.iml
+*.ipr
+
+### NetBeans ###
+/nbproject/private/
+/nbbuild/
+/dist/
+/nbdist/
+/.nb-gradle/
+build/
+!**/src/main/**/build/
+!**/src/test/**/build/
+
+### VS Code ###
+.vscode/
+
+.DS_Store
+setenv.sh
+
+/internal/server/ilm/.openapi-generator/
+.mirrord/
+# Go coverage files
+*.out
+coverage.html
+# GOCOVERDIR output from the cbom-lens-ci end-to-end test, consumed by
+# `go tool covdata textfmt -i=coverage/`. Untracked but previously unignored,
+# so `git add -A` would sweep the binary counter files into a commit.
+/coverage/
+
+# Binaries
+/cbom-lens
+/cbom-lens-ci
+
+# Linter reports
+golangci-lint-report.xml
+
+tmp/
+
+# WINEPREFIX for a wine test
+/testing/registry/wine/
+

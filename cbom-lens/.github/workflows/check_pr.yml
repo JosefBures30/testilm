@@ -1,0 +1,174 @@
+name: Check PR
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    if: github.event_name != 'push'
+    name: Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0  # Shallow clones should be disabled for a better relevancy of analysis
+      - name: Install nmap
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y nmap
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      # Run linting
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with:
+          version: latest
+
+      # Run unit tests and generate coverage report
+      - name: Verify dependencies
+        run: go mod verify
+      - name: Build
+        run: go build -v ./...
+      - name: Run go vet
+        run: go vet ./...
+      # github.com/docker/docker is frozen at v28.5.2+incompatible with an
+      # unfixable CVE-2026-34040 (Moby v29 stopped tagging it). The Engine API
+      # client we use lives in github.com/moby/moby/client; docker/docker may
+      # reappear in the module graph through test-only dependencies, but it must
+      # never become a dependency of the shipped binary.
+      - name: Ensure the released binary never links github.com/docker/docker (CVE-2026-34040)
+        run: |
+          # anchored so github.com/docker/docker-credential-helpers, which the
+          # binary does link, is not mistaken for it
+          if go list -deps ./cmd/cbom-lens | grep -E '^github.com/docker/docker(/|$)'; then
+            echo "::error::github.com/docker/docker is linked into cmd/cbom-lens; use github.com/moby/moby/client instead"
+            exit 1
+          fi
+      - name: Build cbom-lens-ci
+        run: go build -race -cover -covermode=atomic -o cbom-lens-ci ./cmd/cbom-lens
+      - name: Run tests
+        run: go test -v -race -vet=off -coverprofile=coverage.unit.out ./...
+      - name: Convert cbom-lens-ci coverage
+        run: go tool covdata textfmt -i=coverage/ -o coverage.integration.out
+
+      # Package up PR context for downstream workflow_run
+      - name: Prepare PR context artifact
+        run: |
+          cat > pr-context.json <<'JSON'
+          {
+            "pr_number": "${{ github.event.pull_request.number }}",
+            "head_sha":  "${{ github.event.pull_request.head.sha }}",
+            "head_repo": "${{ github.event.pull_request.head.repo.full_name }}",
+            "head_branch": "${{ github.event.pull_request.head.ref }}",
+            "base_ref": "${{ github.event.pull_request.base.ref }}",
+            "run_id": "${{ github.run_id }}"
+          }
+          JSON
+          cat pr-context.json
+
+      - name: Upload PR context
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: pr-context
+          path: pr-context.json
+          retention-days: 1
+          if-no-files-found: error
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-report
+          path: coverage.*.out
+          if-no-files-found: error
+
+      - name: Upload golangci-lint report
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: golangci-lint-report
+          path: golangci-lint-report.xml
+          if-no-files-found: error
+
+  check-windows:
+    if: github.event_name != 'push'
+    name: Check (Windows)
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Verify dependencies
+        run: go mod verify
+
+      - name: Build with coverage
+        run: go build -cover -covermode=atomic -o cbom-lens-ci.exe ./cmd/cbom-lens
+
+      - name: Create coverage directory
+        shell: pwsh
+        run: New-Item -ItemType Directory -Force -Path coverage
+
+      - name: Write test registry values
+        shell: pwsh
+        run: |
+          New-Item -Path "HKCU:\Software\CBOMLensTest" -Force | Out-Null
+          $cert = New-SelfSignedCertificate -DnsName "cbom-lens-ci-test" -CertStoreLocation "Cert:\CurrentUser\My" -NotAfter (Get-Date).AddDays(1)
+          $pem = "-----BEGIN CERTIFICATE-----`n"
+          $pem += [Convert]::ToBase64String($cert.RawData, [Base64FormattingOptions]::InsertLineBreaks)
+          $pem += "`n-----END CERTIFICATE-----"
+          Set-ItemProperty -Path "HKCU:\Software\CBOMLensTest" -Name "PEMCert" -Value $pem -Type String
+          Remove-Item -Path "Cert:\CurrentUser\My\$($cert.Thumbprint)" -Force
+
+      - name: Run registry scan
+        shell: pwsh
+        env:
+          GOCOVERDIR: coverage
+        run: |
+          $config = @"
+          version: 0
+          service:
+            mode: manual
+          registry:
+            enabled: true
+            paths:
+              - hive: HKCU
+                key: 'Software\CBOMLensTest'
+          "@
+          $config | Out-File -FilePath cbom-lens-test.yaml -Encoding utf8
+          .\cbom-lens-ci.exe run --config cbom-lens-test.yaml | Out-File -FilePath output.json
+          $json = Get-Content output.json | ConvertFrom-Json
+          if ($null -eq $json.bomFormat) { Write-Error "Output is not a valid CBOM"; exit 1 }
+          if ($json.components.Count -eq 0) { Write-Error "No components detected — registry scanner may not be working"; exit 1 }
+          # Prove provenance: the discovered component must trace back to the
+          # registry value we planted, not just be some unrelated component.
+          $locations = $json.components.evidence.occurrences.location
+          $fromRegistry = $locations | Where-Object { $_ -like "registry://HKCU*CBOMLensTest*PEMCert*" }
+          if ($null -eq $fromRegistry) {
+            Write-Error "No component traced to the planted registry value (registry://HKCU.../CBOMLensTest/PEMCert). Locations seen: $($locations -join ', ')"
+            exit 1
+          }
+          Write-Host "Verified: planted cert discovered at $fromRegistry"
+
+      - name: Cleanup test registry key
+        if: always()
+        shell: pwsh
+        run: Remove-Item -Path "HKCU:\Software\CBOMLensTest" -Recurse -Force -ErrorAction SilentlyContinue
+
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-windows
+          path: coverage/

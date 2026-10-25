@@ -1,0 +1,36 @@
+_format_version: "3.0"
+_transform: true
+services:
+  - name: core-api
+    url: http://core:8080
+    routes:
+      - name: core-api-route
+        paths:
+          - /api
+        strip_path: false
+        preserve_host: true
+  - name: core-login-logout
+    url: http://core:8080/api
+    routes:
+      - name: core-login-route
+        paths:
+          - /login
+          - /logout
+        strip_path: false
+        preserve_host: true
+  - name: administrator
+    url: http://frontend-administrator:8080
+    routes:
+      - name: administrator-route
+        paths:
+          - /administrator
+        strip_path: true
+        preserve_host: true
+  - name: keycloak
+    url: http://keycloak:8080
+    routes:
+      - name: keycloak-route
+        paths:
+          - /kc
+        strip_path: false
+        preserve_host: true

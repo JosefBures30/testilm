@@ -1,0 +1,198 @@
+import type { ReactNode } from 'react';
+
+type SelectValueMap = Record<string, unknown>;
+
+type MockButton = {
+    tooltip?: string;
+    icon?: string;
+    onClick?: () => void;
+    disabled?: boolean;
+};
+
+type MockDialogButton = {
+    key?: string;
+    body?: ReactNode;
+    onClick?: () => void;
+    disabled?: boolean;
+};
+
+type MockTableRow = {
+    id: string | number;
+    columns?: ReactNode[];
+};
+
+type MockSelector = (state: unknown) => unknown;
+
+export const reduxHooksMockModule = (useDispatchMock: () => unknown, useSelectorMock: (selector: MockSelector) => unknown) => ({
+    useDispatch: () => useDispatchMock(),
+    useSelector: (selector: MockSelector) => useSelectorMock(selector),
+});
+
+export const badgeMockModule = () => ({
+    default: ({ children }: { children?: ReactNode }) => <span>{children}</span>,
+});
+
+export const containerMockModule = () => ({
+    default: ({ children }: { children?: ReactNode }) => <div>{children}</div>,
+});
+
+export const widgetMockModule = () => ({
+    default: ({
+        title,
+        widgetButtons,
+        refreshAction,
+        className,
+        children,
+    }: {
+        title?: string;
+        widgetButtons?: MockButton[];
+        refreshAction?: () => void;
+        className?: string;
+        children?: ReactNode;
+    }) => (
+        <div data-testid={`widget-${title || 'root'}`} className={className}>
+            {refreshAction ? (
+                <span>
+                    <button type="button" data-testid={`refresh-${title || 'root'}`} onClick={refreshAction}>
+                        refresh
+                    </button>
+                </span>
+            ) : null}
+            {(widgetButtons || []).map((button) => (
+                <button
+                    type="button"
+                    key={button.tooltip ?? button.icon}
+                    title={button.tooltip}
+                    onClick={button.onClick}
+                    disabled={button.disabled}
+                >
+                    {button.icon}
+                </button>
+            ))}
+            {children}
+        </div>
+    ),
+});
+
+export const dialogMockModule = () => ({
+    default: ({
+        isOpen,
+        caption,
+        body,
+        buttons,
+        toggle,
+    }: {
+        isOpen?: boolean;
+        caption?: ReactNode;
+        body?: ReactNode;
+        buttons?: MockDialogButton[];
+        toggle?: () => void;
+    }) =>
+        isOpen ? (
+            <div data-testid="dialog">
+                <div>{caption}</div>
+                <div>{body}</div>
+                <button type="button" onClick={toggle}>
+                    toggle
+                </button>
+                {(buttons || []).map((button, index) => (
+                    <button type="button" key={button.key ?? index} onClick={button.onClick} disabled={button.disabled}>
+                        {button.body}
+                    </button>
+                ))}
+            </div>
+        ) : null,
+});
+
+export const customTableMockModule = () => ({
+    default: ({ data }: { data?: MockTableRow[] }) => (
+        <div>
+            {(data || []).map((row) => (
+                <div key={row.id} data-testid={`row-${row.id}`}>
+                    {(row.columns || []).map((column, index) => (
+                        <div key={`${row.id}-col-${index}`}>{column}</div>
+                    ))}
+                </div>
+            ))}
+        </div>
+    ),
+});
+
+export const widgetButtonsMockModule = () => ({
+    default: ({ buttons }: { buttons?: MockButton[] }) => (
+        <div>
+            {(buttons || []).map((button) => (
+                <button type="button" key={button.tooltip ?? button.icon} title={button.tooltip} onClick={button.onClick}>
+                    {button.icon}
+                </button>
+            ))}
+        </div>
+    ),
+});
+
+export const createSelectMockModule = (valuesById: SelectValueMap, defaultValue: unknown = 'user-1') => ({
+    default: ({ id, onChange, isMulti }: { id?: string; onChange: (value: unknown) => void; isMulti?: boolean }) => (
+        <button
+            type="button"
+            data-testid={`select-${id}`}
+            onClick={() => {
+                if (isMulti) {
+                    onChange([{ value: 'group-1', label: 'Group 1' }]);
+                    return;
+                }
+
+                if (id && valuesById[id] !== undefined) {
+                    onChange(valuesById[id]);
+                    return;
+                }
+
+                if (valuesById.__default !== undefined) {
+                    onChange(valuesById.__default);
+                    return;
+                }
+
+                onChange(defaultValue);
+            }}
+        >
+            select
+        </button>
+    ),
+});
+
+export const COMMON_USERS_STATE = { users: [{ uuid: 'user-1', username: 'owner1' }] };
+export const COMMON_GROUPS_STATE = { certificateGroups: [{ uuid: 'group-1', name: 'Group 1' }] };
+export const COMMON_VAULT_PROFILES_STATE = {
+    vaultProfiles: [
+        { uuid: 'vp-1', name: 'Vault Profile One', enabled: true, vaultInstance: { uuid: 'vault-1' } },
+        { uuid: 'vp-2', name: 'Vault Profile Two', enabled: true, vaultInstance: { uuid: 'vault-2' } },
+    ],
+};
+
+type MockSelectOption = { value: unknown };
+
+export const optionListSelectMockModule = () => ({
+    default: ({
+        id,
+        options,
+        value,
+        onChange,
+        isDisabled,
+    }: {
+        id?: string;
+        options?: MockSelectOption[];
+        value?: MockSelectOption[];
+        onChange: (value: MockSelectOption[]) => void;
+        isDisabled?: boolean;
+    }) => (
+        <button
+            type="button"
+            data-testid={`select-${id}`}
+            data-options={(options || []).map((option) => option.value).join(',')}
+            data-value={(value || []).map((option) => option.value).join(',')}
+            disabled={isDisabled}
+            onClick={() => onChange(options || [])}
+        >
+            select
+        </button>
+    ),
+});

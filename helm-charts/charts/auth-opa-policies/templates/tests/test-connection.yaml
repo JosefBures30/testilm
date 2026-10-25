@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: "{{ include "auth-opa-policies.fullname" . }}-test-connection"
+  labels:
+    {{- include "auth-opa-policies.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": test
+spec:
+  containers:
+    - name: curl
+      image: {{ include "auth-opa-policies.curl.image" . }}
+      command:
+        - /bin/sh
+        - -c
+        - |
+          curl --silent --retry 5 --retry-delay 5 --retry-all-errors auth-opa-policies-service:{{ .Values.service.port }}
+  restartPolicy: Never

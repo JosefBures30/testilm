@@ -1,0 +1,249 @@
+# Existing namespace-local credential bundle; empty keeps chart-generated credentials.
+existingSecret: ""
+
+# Default values for network-discovery-provider.
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+nameOverride: network-discovery-provider
+fullnameOverride: ""
+
+# Global parameters that will overwrite local parameters
+global:
+  replicaCount: 1
+  image:
+    registry: ""
+    repository: ""
+    # array of secret names
+    pullSecrets: []
+  volumes:
+    ephemeral:
+      type: ""
+      sizeLimit: ""
+      storageClassName: ""
+      custom: {}
+  database:
+    type: ""
+    host: ""
+    port: ""
+    name: ""
+    username: ""
+    password: ""
+    pgBouncer:
+      enabled: true
+      host: "pg-bouncer-service"
+      port: 5432
+  httpProxy: ""
+  httpsProxy: ""
+  noProxy: ""
+  # additional init containers that will be added to each pod
+  # - name: some-image
+  #   image: some-image
+  #   imagePullPolicy: IfNotPresent
+  #   securityContext:
+  #     runAsNonRoot: true
+  #   ports:
+  #     - name: port
+  #       containerPort: "{{ $.Values.container.port }}"
+  initContainers: []
+  # additional sidecar containers that will be added to each pod
+  # see the sample of init containers above
+  sidecarContainers: []
+  # additional volumes that will be added to each pod
+  # - name: additional-volume
+  #   configMap:
+  #     name: additional-volume
+  additionalVolumes: []
+  # additional volume mounts that will be added to each pod
+  # - name: additional-volume
+  #   mountPath: /opt/app
+  #   readOnly: true
+  additionalVolumeMounts: []
+  # additional service ports that will be added to each pod
+  # - name: other-port
+  #   port: 8080
+  #   targetPort: 8080
+  additionalPorts: []
+  # additional environment variables that will be added to each pod
+  additionalEnv:
+    # - name: SOME_ENV
+    #   value: "some-value"
+    variables: []
+    # list of config maps to be added as environment variables
+    configMaps: []
+    # list of secrets to be added as environment variables
+    secrets: []
+
+database:
+  # currently only postgresql is supported
+  type: "postgresql"
+  host: "host.docker.internal"
+  port: 5432
+  name: "ilmdb"
+  username: "ilmuser"
+  password: "your-strong-password"
+httpProxy: ""
+httpsProxy: ""
+noProxy: ""
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 100
+  targetCPUUtilizationPercentage: 80
+  # targetMemoryUtilizationPercentage: 80
+# Number of replicas. Empty follows global.replicaCount; a value set here wins over it. Set it to 1 when the discovery
+# v2 interface is used and global.replicaCount is above 1: a v2 run lives in the memory of the pod that started it,
+# so another replica behind the service would answer Core's calls for runs it does not hold. v1 has no such limit.
+# With autoscaling.enabled the chart leaves the replica count to your autoscaler, so keep it off for v2, or hold the
+# autoscaler to one replica.
+replicaCount: ""
+
+service:
+  type: "ClusterIP"
+  port: 8080
+
+image:
+  # default registry name
+  registry: hub.omnitrustregistry.com
+  repository: ilm
+  name: ip-discovery-provider
+  tag: 1.7.0
+  # the digest to be used instead of the tag
+  digest: ""
+  pullPolicy: IfNotPresent
+  # array of secret names
+  pullSecrets: []
+  # custom command and args
+  command: []
+  args: []
+  # default security context
+  securityContext:
+    runAsNonRoot: true
+    # runAsUser: 10001
+    readOnlyRootFilesystem: true
+  # probes configuration
+  probes:
+    liveness:
+      enabled: false
+      # custom probe command, will override the default one
+      custom: {}
+      initialDelaySeconds: 60
+      timeoutSeconds: 5
+      periodSeconds: 10
+      successThreshold: 1
+      failureThreshold: 3
+    readiness:
+      enabled: true
+      # custom probe command, will override the default one
+      custom: {}
+      initialDelaySeconds: 15
+      timeoutSeconds: 5
+      periodSeconds: 10
+      successThreshold: 1
+      failureThreshold: 3
+    startup:
+      enabled: true
+      # custom probe command, will override the default one
+      custom: {}
+      initialDelaySeconds: 15
+      timeoutSeconds: 5
+      periodSeconds: 10
+      successThreshold: 1
+      failureThreshold: 45
+  # The connector buffers the undrained results of its discovery v2 runs in heap, up to 512 MiB in total by default
+  # (DISCOVERY_BUFFER_MAX_TOTAL_BYTES). Size the memory limit and the JVM heap (javaOpts) to hold it on top of the
+  # connector's own footprint, or lower the bound through additionalEnv.
+  resources: {}
+    # We follow recommendations and general guidelines to manage resources from:
+    # https://master.sdk.operatorframework.io/docs/best-practices/managing-resources/
+    # We recommend default requests for CPU and Memory, leaving the limits as a conscious
+    # choice for the user. If you do want to specify your own resources, uncomment the following
+    # lines, adjust them as necessary, and remove the curly braces after 'resources'.
+    # requests:
+    #   cpu: 50m
+    #   memory: 450M
+    # limits: {}
+
+curl:
+  image:
+    # default registry name
+    registry: hub.omnitrustregistry.com
+    repository: ilm
+    name: curl
+    tag: 8.16.0
+    # the digest to be used instead of the tag
+    digest: ""
+    pullPolicy: IfNotPresent
+    # array of secret names
+    pullSecrets: []
+    # custom command and args
+    command: []
+    args: []
+    # default security context
+    securityContext:
+      runAsNonRoot: true
+      # runAsUser: 100
+      readOnlyRootFilesystem: true
+    # it does not make sense to have probes for curl
+    resources: {}
+      # We follow recommendations and general guidelines to manage resources from:
+      # https://master.sdk.operatorframework.io/docs/best-practices/managing-resources/
+      # We recommend default requests for CPU and Memory, leaving the limits as a conscious
+      # choice for the user. If you do want to specify your own resources, uncomment the following
+      # lines, adjust them as necessary, and remove the curly braces after 'resources'.
+      # requests:
+      #   cpu: 50m
+      #   memory: 150M
+      # limits: {}
+
+# customization of the chart
+initContainers: []
+sidecarContainers: []
+additionalVolumes: []
+additionalVolumeMounts: []
+additionalPorts: []
+additionalEnv:
+  variables: []
+  configMaps: []
+  secrets: []
+
+volumes:
+  ephemeral:
+    # available types are: memory, storage, custom
+    type: memory
+    sizeLimit: "1Mi"
+    storageClassName: ""
+    custom: {}
+    #  emptyDir:
+    #    sizeLimit: "10Mi"
+    #    medium: "Memory"
+
+logging:
+  level: "INFO"
+
+discovery:
+  probe:
+    # TCP connect timeout of a single target probe in milliseconds (DISCOVERY_PROBE_CONNECT_TIMEOUT_MS). Every
+    # unreachable address in a sweep waits out the whole value, so it drives the duration of a sweep. 300 keeps
+    # the sweep times of 1.6.1; the connector's own default of 500 makes a long sweep about 1.7x longer, which can
+    # take it past Core's 6 h limit for a run. Leave empty to use the connector default.
+    connectTimeoutMs: 300
+
+javaOpts: ""
+
+serviceAccount:
+  # Specifies whether a service account should be created
+  create: true
+  # Annotations to add to the service account
+  annotations: {}
+  # The name of the service account to use.
+  # If not set and create is true, a name is generated using the fullname template
+  name: "network-discovery-provider-sa"
+
+podLabels: {}
+
+podAnnotations: {}
+
+podSecurityContext: {}
+  # fsGroup: 2000

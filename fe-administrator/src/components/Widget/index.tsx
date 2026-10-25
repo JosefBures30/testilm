@@ -1,0 +1,250 @@
+import cn from 'classnames';
+import type React from 'react';
+import { useCallback, useMemo, useState } from 'react';
+
+import Spinner from 'components/Spinner';
+import WidgetButtons, { type WidgetButtonProps } from 'components/WidgetButtons';
+import WidgetLock from 'components/WidgetLock';
+import { selectors } from 'ducks/user-interface';
+import { actions as tablePaginationActions, selectors as tablePaginationSelectors } from 'ducks/table-pagination';
+import { useDispatch, useSelector } from 'react-redux';
+import { Link, useLocation } from 'react-router';
+import type { LockWidgetNameEnum, WidgetLockErrorModel } from 'types/user-interface';
+import { ListRestart, RefreshCw } from 'lucide-react';
+import Button from 'components/Button';
+
+interface WidgetInfoCard {
+    title: string;
+    heading?: string;
+    description: string;
+    notesList?: string[];
+}
+
+type Props = {
+    id?: string;
+    title?: string;
+    titleLink?: string;
+    onTitleLinkClick?: (event: React.MouseEvent<HTMLAnchorElement>) => void;
+    titleSize?: 'small' | 'medium' | 'large' | 'larger';
+    titleBoldness?: 'normal' | 'bold' | 'semi-bold';
+    titleColor?: string;
+    className?: string;
+    children?: React.ReactNode | React.ReactNode[];
+    busy?: boolean;
+    disableRefresh?: boolean;
+    widgetLockName?: LockWidgetNameEnum | LockWidgetNameEnum[];
+    /** A lock owned by the caller, for widgets whose lock is per object rather than per global widget name. */
+    widgetLock?: WidgetLockErrorModel;
+    refreshAction?: () => void;
+    resetViewAction?: () => void;
+    widgetButtons?: WidgetButtonProps[];
+    widgetExtraTopNode?: React.ReactNode;
+    hideWidgetButtons?: boolean;
+    lockSize?: 'small' | 'normal' | 'large';
+    widgetInfoCard?: WidgetInfoCard;
+    innerContainerProps?: React.DetailedHTMLProps<React.HTMLAttributes<HTMLDivElement>, HTMLDivElement>;
+    dataTestId?: string;
+    noBorder?: boolean;
+    enableBusyOverlay?: boolean;
+};
+
+function Widget({
+    id,
+    title = '',
+    titleLink,
+    onTitleLinkClick,
+    titleSize = 'medium',
+    widgetButtons,
+    titleBoldness = 'bold',
+    titleColor = 'var(--content)',
+    className,
+    children = [],
+    busy = false,
+    disableRefresh = false,
+    widgetLockName,
+    widgetLock: ownLock,
+    refreshAction,
+    resetViewAction,
+    widgetExtraTopNode,
+    hideWidgetButtons = false,
+    lockSize = 'normal',
+    widgetInfoCard,
+    innerContainerProps,
+    dataTestId,
+    noBorder = false,
+    enableBusyOverlay = false,
+}: Readonly<Props>) {
+    const widgetLocks = useSelector(selectors.selectWidgetLocks) || [];
+    const storeLock = widgetLocks.find(
+        (lock) => lock.widgetName === widgetLockName || (Array.isArray(widgetLockName) && widgetLockName.includes(lock.widgetName)),
+    );
+    const widgetLock = ownLock ?? storeLock;
+    const [showWidgetInfo, setShowWidgetInfo] = useState(false);
+
+    const dispatch = useDispatch();
+    const { pathname } = useLocation();
+    const hasResettableTableState = useSelector(tablePaginationSelectors.hasResettableStateForPath(pathname));
+    const effectiveResetViewAction =
+        resetViewAction ??
+        (refreshAction && hasResettableTableState ? () => dispatch(tablePaginationActions.clearPaginationByPath({ pathname })) : undefined);
+
+    const getTitleText = () =>
+        title ? (
+            <h5
+                className={cn(
+                    `text-[${titleColor}]`,
+                    { 'font-bold': titleBoldness === 'bold' },
+                    { 'font-semibold': titleBoldness === 'semi-bold' },
+                    { 'font-normal': titleBoldness === 'normal' },
+                    { 'text-base': titleSize === 'medium' },
+                    { 'text-lg font-bold': titleSize === 'large' },
+                    { 'text-sm': titleSize === 'small' },
+                    { 'text-xl font-bold': titleSize === 'larger' },
+                )}
+            >
+                {title}
+            </h5>
+        ) : null;
+
+    const renderTitle = () =>
+        titleLink ? (
+            <Link to={titleLink} className="text-brand" onClick={onTitleLinkClick}>
+                {getTitleText()}
+            </Link>
+        ) : (
+            getTitleText()
+        );
+
+    // A store lock is cleared by whatever put it there, so refreshing under one is pointless. A caller-owned lock is
+    // the caller's own state, and its refresh action is the retry that clears it, so the button stays live.
+    const renderRefreshButton = () =>
+        refreshAction ? (
+            <Button
+                onClick={refreshAction}
+                data-testid="refresh-icon"
+                variant="transparent"
+                title="Refresh"
+                aria-label="Refresh"
+                disabled={busy || disableRefresh || !!storeLock}
+            >
+                <RefreshCw size={16} />
+            </Button>
+        ) : null;
+
+    const renderResetViewButton = () =>
+        effectiveResetViewAction ? (
+            <Button
+                onClick={effectiveResetViewAction}
+                data-testid="reset-view-icon"
+                variant="transparent"
+                title="Reset filters, sorting and pagination"
+                aria-label="Reset filters, sorting and pagination"
+                disabled={busy || !!widgetLock}
+            >
+                <ListRestart size={16} />
+            </Button>
+        ) : null;
+
+    const renderWidgetButtons = useCallback(() => {
+        const updatedWidgetButtons = widgetButtons?.map((button) => ({ ...button, disabled: widgetLock ? true : button.disabled })) || [];
+        if (widgetInfoCard)
+            updatedWidgetButtons.push({
+                icon: 'info',
+                tooltip: 'Widget Info',
+                onClick: () => setShowWidgetInfo(!showWidgetInfo),
+                disabled: false,
+            });
+
+        if (!updatedWidgetButtons.length) return null;
+        if (hideWidgetButtons) return null;
+        else {
+            return <WidgetButtons buttons={updatedWidgetButtons} justify="end" />;
+        }
+    }, [widgetButtons, hideWidgetButtons, widgetLock, widgetInfoCard, showWidgetInfo]);
+
+    const hasHeaderContent = useMemo(() => {
+        const hasTitle = !!title;
+        const hasRefreshButton = !!refreshAction;
+        const hasButtons = !!(widgetButtons?.length || widgetInfoCard) && !hideWidgetButtons;
+        return !!(hasTitle || hasRefreshButton || effectiveResetViewAction || hasButtons || widgetExtraTopNode);
+    }, [title, refreshAction, effectiveResetViewAction, widgetButtons, widgetInfoCard, hideWidgetButtons, widgetExtraTopNode]);
+
+    return (
+        <section
+            data-testid={dataTestId}
+            className={cn(
+                'relative flex flex-col rounded-xl text-content w-full',
+                {
+                    'border border-divider p-4 md:p-5 shadow-2xs bg-surface-raised': !noBorder || widgetLock,
+                },
+                className,
+            )}
+            id={id}
+        >
+            {hasHeaderContent && (
+                <div className={cn('flex items-center justify-between flex-wrap gap-2', { 'mb-3': !!widgetLock || !!children })}>
+                    <div className="flex items-center gap-1">
+                        {renderTitle()}
+                        {renderRefreshButton()}
+                        {renderResetViewButton()}
+                    </div>
+
+                    <div className="flex-1 flex items-center gap-2 justify-end">
+                        {renderWidgetButtons()}
+                        {widgetExtraTopNode}
+                    </div>
+                </div>
+            )}
+
+            {widgetInfoCard && (
+                <div
+                    className={cn('overflow-hidden transition-all duration-300 ease-in-out my-2', {
+                        'max-h-0 opacity-0': !showWidgetInfo,
+                        'max-h-[1000px] opacity-100': showWidgetInfo,
+                    })}
+                >
+                    <div className="my-2 border border-divider rounded-lg">
+                        {widgetInfoCard.heading && (
+                            <h2 className="px-4 pt-3 mb-0 text-base font-semibold text-content">{widgetInfoCard.heading}</h2>
+                        )}
+                        <div className="px-4 py-3">
+                            {widgetInfoCard.description && (
+                                <p className="text-sm text-content-muted mb-0">
+                                    {widgetInfoCard.title}: {widgetInfoCard.description}
+                                </p>
+                            )}
+
+                            {widgetInfoCard.notesList && (
+                                <ul className="mt-2 space-y-1 list-disc list-inside text-sm text-content-muted">
+                                    {widgetInfoCard.notesList.map((note) => (
+                                        <li key={note}>{note}</li>
+                                    ))}
+                                </ul>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            )}
+            {widgetLock ? (
+                <WidgetLock
+                    lockTitle={widgetLock.lockTitle}
+                    lockText={widgetLock.lockText}
+                    lockDetails={widgetLock.lockDetails}
+                    size={lockSize}
+                    lockType={widgetLock.lockType}
+                />
+            ) : (
+                <div className="relative" {...innerContainerProps}>
+                    {children}
+                    {busy && enableBusyOverlay && (
+                        <div className="absolute inset-0 z-10 bg-surface-raised/35" data-testid="widget-busy-overlay" />
+                    )}
+                </div>
+            )}
+
+            <Spinner active={busy} />
+        </section>
+    );
+}
+
+export default Widget;

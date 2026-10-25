@@ -1,0 +1,1730 @@
+import { combineReducers, type UnknownAction } from '@reduxjs/toolkit';
+import type { AttributeDescriptorModel } from 'types/attributes';
+import type { AuthResourceModel } from 'types/auth';
+import type { ConnectorResponseModel, HealthModel } from 'types/connectors';
+import type { NameAndUuidModel } from 'types/locations';
+import type { RoleDetailModel, SubjectPermissionsModel } from 'types/roles';
+import type { ConnectInfoDto, ListViewDto } from 'types/openapi';
+import type { EventTriggerAssociationModel, TriggerModel } from 'types/rules';
+import { toRoutePath } from 'utils/route-path';
+
+// IMPORTANT: This file is used ONLY in component tests (Playwright CT).
+// It must NOT import the real duck modules
+
+export type ReactFlowUITest = {
+    flowChartNodes: Array<{
+        id: string;
+        type?: string;
+        parentId?: string;
+        hidden?: boolean;
+        position?: { x: number; y: number };
+        data?: unknown;
+    }>;
+    flowChartEdges: unknown[];
+    flowDirection?: 'TB' | 'BT' | 'LR' | 'RL' | 'STAR';
+    expandedHiddenNodeId?: string;
+};
+
+export type UserInterfaceTestState = {
+    widgetLocks: unknown[];
+    globalModal: {
+        title?: string;
+        size: 'sm' | 'md' | 'lg' | 'xl';
+        content?: unknown;
+        isOpen: boolean;
+        showCancelButton: boolean;
+        showOkButton: boolean;
+        showCloseButton: boolean;
+        showSubmitButton: boolean;
+        okButtonCallback?: () => void;
+        cancelButtonCallback?: () => void;
+    };
+    initiateAttributeCallback?: boolean;
+    attributeCallbackValue?: string;
+    reactFlowUI?: ReactFlowUITest;
+};
+
+const userInterfaceTestInitialState: UserInterfaceTestState = {
+    widgetLocks: [],
+    globalModal: {
+        title: undefined,
+        size: 'sm',
+        content: undefined,
+        isOpen: false,
+        showCancelButton: false,
+        showOkButton: false,
+        showCloseButton: false,
+        showSubmitButton: false,
+        okButtonCallback: undefined,
+        cancelButtonCallback: undefined,
+    },
+    initiateAttributeCallback: undefined,
+    attributeCallbackValue: undefined,
+    reactFlowUI: {
+        flowChartNodes: [],
+        flowChartEdges: [],
+        expandedHiddenNodeId: undefined,
+    },
+};
+
+function userInterfaceTestReducer(
+    state: UserInterfaceTestState = userInterfaceTestInitialState,
+    action: UnknownAction,
+): UserInterfaceTestState {
+    const a = action as { type: string; payload?: unknown };
+    if (a.type === 'userInterface/showGlobalModal' && a.payload) {
+        return { ...state, globalModal: a.payload as UserInterfaceTestState['globalModal'] };
+    }
+    if (a.type === 'userInterface/resetState') {
+        return { ...userInterfaceTestInitialState };
+    }
+    if (a.type === 'userInterface/setInitiateAttributeCallback') {
+        return { ...state, initiateAttributeCallback: a.payload as boolean | undefined };
+    }
+    if (a.type === 'userInterface/setAttributeCallbackValue') {
+        return { ...state, attributeCallbackValue: a.payload as string | undefined };
+    }
+    if (a.type === 'userInterface/clearAttributeCallbackValue') {
+        return { ...state, attributeCallbackValue: undefined };
+    }
+    if (a.type === 'userInterface/updateReactFlowNodes' && a.payload && state.reactFlowUI) {
+        return { ...state, reactFlowUI: { ...state.reactFlowUI, flowChartNodes: a.payload as ReactFlowUITest['flowChartNodes'] } };
+    }
+    if (a.type === 'userInterface/updateReactFlowEdges' && a.payload && state.reactFlowUI) {
+        return { ...state, reactFlowUI: { ...state.reactFlowUI, flowChartEdges: a.payload as unknown[] } };
+    }
+    if (a.type === 'userInterface/setReactFlowUI') {
+        return { ...state, reactFlowUI: a.payload as ReactFlowUITest | undefined };
+    }
+    if (a.type === 'userInterface/clearReactFlowUI') {
+        return { ...state, reactFlowUI: undefined };
+    }
+    if (a.type === 'userInterface/setShowHiddenNodes') {
+        const expandedHiddenNodeId = a.payload as string | undefined;
+        const reactFlowUI = state.reactFlowUI
+            ? { ...state.reactFlowUI, expandedHiddenNodeId }
+            : { flowChartNodes: [], flowChartEdges: [], expandedHiddenNodeId };
+        return { ...state, reactFlowUI };
+    }
+    if (a.type === 'userInterface/deleteNode' && a.payload && state.reactFlowUI) {
+        const nodeId = a.payload as string;
+        const flowChartNodes = state.reactFlowUI.flowChartNodes.filter((node) => node.id !== nodeId);
+        return { ...state, reactFlowUI: { ...state.reactFlowUI, flowChartNodes } };
+    }
+    return state;
+}
+
+export type EnumsTestState = {
+    platformEnums: Record<string, Record<string, { label?: string; value?: string }>>;
+};
+
+const enumsTestInitialState: EnumsTestState = {
+    platformEnums: {},
+};
+
+export type FiltersTestState = {
+    filters: Array<{
+        entity: number;
+        filter: {
+            availableFilters: unknown[];
+            currentFilters: unknown[];
+            isFetchingFilters: boolean;
+            hasLoadedFilters: boolean;
+            hasFailedFilters?: boolean;
+            handedIn?:
+                | { source: 'drill-down'; scope: string }
+                | { source: 'return'; position?: { viewId: string; isDrillDown: boolean }; sort?: unknown; paging?: unknown };
+            viewPosition?: { viewId: string; isDrillDown: boolean };
+            leftList?: {
+                path: string;
+                scope: string;
+                filters: unknown[];
+                position?: { viewId: string; isDrillDown: boolean };
+                sort?: unknown;
+                paging?: unknown;
+                hasGoneAway: boolean;
+            };
+        };
+    }>;
+};
+
+type FilterTestEntry = FiltersTestState['filters'][number]['filter'];
+
+const filtersTestInitialState: FiltersTestState = {
+    filters: [],
+};
+
+function filtersTestReducer(state: FiltersTestState = filtersTestInitialState, action: UnknownAction): FiltersTestState {
+    const a = action as {
+        type: string;
+        payload?: {
+            entity: number;
+            availableFilters?: unknown[];
+            currentFilters?: unknown[];
+            filters?: unknown[];
+            position?: { viewId: string; isDrillDown: boolean };
+            path?: string;
+            scope?: string;
+            sort?: unknown;
+            paging?: unknown;
+        };
+    };
+    if (a.type === 'filters/getAvailableFilters') {
+        return state;
+    }
+    if (a.type === 'filters/getAvailableFiltersSuccess' && a.payload) {
+        const payload = a.payload;
+        const idx = state.filters.findIndex((f) => f.entity === payload.entity);
+        const filter =
+            idx >= 0
+                ? state.filters[idx].filter
+                : {
+                      availableFilters: [],
+                      currentFilters: [],
+                      isFetchingFilters: false,
+                      hasLoadedFilters: false,
+                  };
+        const next = {
+            entity: payload.entity,
+            filter: {
+                ...filter,
+                availableFilters: payload.availableFilters ?? [],
+                isFetchingFilters: false,
+                hasLoadedFilters: true,
+                hasFailedFilters: false,
+            },
+        };
+        if (idx >= 0) {
+            return {
+                filters: state.filters.slice(0, idx).concat([next], state.filters.slice(idx + 1)),
+            };
+        }
+        return { filters: [...state.filters, next] };
+    }
+    if (a.type === 'filters/getAvailableFiltersFailure' && a.payload) {
+        const payload = a.payload;
+        const idx = state.filters.findIndex((f) => f.entity === payload.entity);
+        if (idx < 0) return state;
+        const f = state.filters[idx];
+        return {
+            filters: state.filters
+                .slice(0, idx)
+                .concat(
+                    [{ ...f, filter: { ...f.filter, isFetchingFilters: false, hasLoadedFilters: true, hasFailedFilters: true } }],
+                    state.filters.slice(idx + 1),
+                ),
+        };
+    }
+    // Mirrors the real handed-in lifecycle, so a component test can drive a drill-down or a return
+    // from a detail page through the same actions the pages dispatch.
+    const update = (entity: number, change: (filter: FilterTestEntry) => FilterTestEntry): FiltersTestState => {
+        const idx = state.filters.findIndex((f) => f.entity === entity);
+        const filter: FilterTestEntry =
+            idx >= 0
+                ? state.filters[idx].filter
+                : { availableFilters: [], currentFilters: [], isFetchingFilters: false, hasLoadedFilters: false };
+        const next = { entity, filter: change(filter) };
+        return idx >= 0
+            ? { filters: state.filters.slice(0, idx).concat([next], state.filters.slice(idx + 1)) }
+            : { filters: [...state.filters, next] };
+    };
+    const payload = a.payload;
+    if (!payload) return state;
+    if (a.type === 'filters/setCurrentFilters') {
+        return update(payload.entity, (filter) => ({ ...filter, currentFilters: payload.currentFilters ?? [], handedIn: undefined }));
+    }
+    if (a.type === 'filters/setDrillDownFilters') {
+        const filters = payload.filters ?? [];
+        return update(payload.entity, (filter) => ({
+            ...filter,
+            currentFilters: filters,
+            handedIn: filters.length > 0 ? { source: 'drill-down', scope: `/${(payload.path ?? '').split('/')[1] ?? ''}` } : undefined,
+        }));
+    }
+    if (a.type === 'filters/setViewPosition') {
+        return update(payload.entity, (filter) => ({ ...filter, viewPosition: payload.position }));
+    }
+    if (a.type === 'filters/leaveList') {
+        return update(payload.entity, (filter) => ({
+            ...filter,
+            leftList: {
+                path: toRoutePath(payload.path ?? ''),
+                scope: toRoutePath(payload.scope ?? ''),
+                filters: filter.currentFilters,
+                position: filter.viewPosition,
+                sort: payload.sort,
+                paging: payload.paging,
+                hasGoneAway: false,
+            },
+        }));
+    }
+    if (a.type === 'filters/routeChanged') {
+        const pathname = toRoutePath((a.payload as unknown as { pathname: string }).pathname);
+        return {
+            filters: state.filters.map((current) => {
+                const handedIn = current.filter.handedIn;
+                const leftDrillDown =
+                    handedIn?.source === 'drill-down' && pathname !== handedIn.scope && !pathname.startsWith(`${handedIn.scope}/`);
+                const entry = leftDrillDown ? { ...current, filter: { ...current.filter, handedIn: undefined } } : current;
+                const left = entry.filter.leftList;
+                if (!left || pathname === left.path) return entry;
+                const inScope = pathname === left.scope || pathname.startsWith(`${left.scope}/`);
+                return inScope
+                    ? { ...entry, filter: { ...entry.filter, leftList: { ...left, hasGoneAway: true } } }
+                    : { ...entry, filter: { ...entry.filter, leftList: undefined, handedIn: undefined, viewPosition: undefined } };
+            }),
+        };
+    }
+    if (a.type === 'filters/returnToList') {
+        return update(payload.entity, (filter) => {
+            const left = filter.leftList;
+            if (!left?.hasGoneAway || left.path !== toRoutePath(payload.path ?? '') || filter.handedIn?.source === 'drill-down')
+                return { ...filter, leftList: undefined };
+            return {
+                ...filter,
+                leftList: undefined,
+                currentFilters: left.filters,
+                handedIn: { source: 'return', position: left.position, sort: left.sort, paging: left.paging },
+            };
+        });
+    }
+    return state;
+}
+
+function enumsTestReducer(state: EnumsTestState | undefined, _action: UnknownAction): EnumsTestState {
+    return state ?? enumsTestInitialState;
+}
+
+export type InfoTestState = {
+    platformInfo?: unknown;
+    isFetching: boolean;
+};
+
+const infoTestInitialState: InfoTestState = {
+    platformInfo: undefined,
+    isFetching: false,
+};
+
+function infoTestReducer(state: InfoTestState | undefined, action: UnknownAction): InfoTestState {
+    state ??= infoTestInitialState;
+    switch (action.type) {
+        case 'info/getPlatformInfo':
+            return { platformInfo: undefined, isFetching: true };
+        case 'info/getPlatformInfoSuccess':
+            return { platformInfo: action.payload, isFetching: false };
+        case 'info/getPlatformInfoFailure':
+            return { ...state, isFetching: false };
+        default:
+            return state;
+    }
+}
+
+export type NotificationsTestState = {
+    overviewNotifications: unknown[];
+    isFetchingOverview: boolean;
+};
+
+const notificationsTestInitialState: NotificationsTestState = {
+    overviewNotifications: [],
+    isFetchingOverview: false,
+};
+
+function notificationsTestReducer(state: NotificationsTestState | undefined, _action: UnknownAction): NotificationsTestState {
+    return state ?? notificationsTestInitialState;
+}
+
+export type AuthTestState = {
+    profile?: {
+        username: string;
+        permissions?: {
+            allowedListings?: unknown[];
+            allowedActions?: { resource: string; actions?: string[] }[];
+        };
+    };
+    resources?: AuthResourceModel[];
+    objects?: NameAndUuidModel[];
+    isFetchingObjects?: boolean;
+};
+
+const authTestInitialState: AuthTestState = {
+    profile: {
+        username: 'Test User',
+        permissions: {
+            allowedListings: [],
+        },
+    },
+};
+
+function authTestReducer(state: AuthTestState | undefined, _action: UnknownAction): AuthTestState {
+    return state ?? authTestInitialState;
+}
+
+export type LoginTestState = {
+    loginMethods?: Array<{ name: string; loginUrl: string }>;
+    isFetching: boolean;
+    error?: string;
+};
+
+const loginTestInitialState: LoginTestState = { isFetching: false };
+
+/** The login page's providers come preloaded; the fetch belongs to an epic, which component tests do not run. */
+function loginTestReducer(state: LoginTestState | undefined, _action: UnknownAction): LoginTestState {
+    return state ?? loginTestInitialState;
+}
+
+export type BrandingTestState = {
+    branding?: Record<string, string | undefined>;
+    /** The anonymous read, as the login page and the brand token layer see it. Nullable, as the response is. */
+    publicBranding?: Record<string, string | null | undefined | boolean>;
+    /** Whether that read failed. A failure settles publicBranding on the platform default, which looks identical. */
+    publicBrandingReadFailed?: boolean;
+    /** What a save or a reset put on the wire. Kept apart from `branding` so a preloaded value is not mistaken for it. */
+    sentBranding?: Record<string, string | undefined>;
+    isFetchingBranding: boolean;
+    isFetchingPublicBranding?: boolean;
+    isUpdatingBranding: boolean;
+    isResettingBranding: boolean;
+    updateSucceeded: boolean;
+    resetSucceeded: boolean;
+    error?: string;
+};
+
+/** Exported so a wrapper can preload one field without restating every flag. */
+export const brandingTestInitialState: BrandingTestState = {
+    isFetchingBranding: false,
+    isUpdatingBranding: false,
+    isResettingBranding: false,
+    updateSucceeded: false,
+    resetSucceeded: false,
+};
+
+/**
+ * Applies the write locally so a component test can assert what a save or a reset sent, without epics. The real slice
+ * stores the branding Core reads back; here the request itself is good enough to prove the payload.
+ */
+function brandingTestReducer(state: BrandingTestState = brandingTestInitialState, action: UnknownAction): BrandingTestState {
+    const a = action as { type: string; payload?: { branding?: Record<string, string | undefined> } };
+    switch (a.type) {
+        case 'branding/updateBranding':
+            return { ...state, sentBranding: a.payload?.branding, isUpdatingBranding: false, updateSucceeded: true };
+        case 'branding/resetBranding':
+            return { ...state, sentBranding: {}, branding: {}, isResettingBranding: false, resetSucceeded: true };
+        // The anonymous read has no epic here, so a test drives it by dispatching the success action directly, which
+        // is what lets one mount cover both "no branding yet" and the response that follows.
+        case 'branding/getPublicBrandingSuccess':
+            return {
+                ...state,
+                publicBranding: (action as { payload?: { branding: BrandingTestState['publicBranding'] } }).payload?.branding,
+                publicBrandingReadFailed: false,
+            };
+        case 'branding/getPublicBrandingFailure':
+            return { ...state, publicBrandingReadFailed: true };
+        default:
+            return state;
+    }
+}
+
+export type CustomAttributesTestState = {
+    resourceCustomAttributes: unknown[];
+    resourceCustomAttributesContents: Array<{ resource: string; resourceUuid: string; customAttributes: unknown[] }>;
+    secondaryResourceCustomAttributes: unknown[];
+    isFetchingResourceCustomAttributes: boolean;
+    isUpdatingContent: boolean;
+};
+
+const customAttributesTestInitialState: CustomAttributesTestState = {
+    resourceCustomAttributes: [],
+    resourceCustomAttributesContents: [],
+    secondaryResourceCustomAttributes: [],
+    isFetchingResourceCustomAttributes: false,
+    isUpdatingContent: false,
+};
+
+function customAttributesTestReducer(
+    state: CustomAttributesTestState = customAttributesTestInitialState,
+    action: UnknownAction,
+): CustomAttributesTestState {
+    const a = action as { type: string; payload?: unknown };
+    switch (a.type) {
+        case 'customAttributes/listResourceCustomAttributes':
+            return { ...state, isFetchingResourceCustomAttributes: true };
+        case 'customAttributes/listResourceCustomAttributesSuccess':
+            return {
+                ...state,
+                resourceCustomAttributes: (a.payload as unknown[]) ?? [],
+                isFetchingResourceCustomAttributes: false,
+            };
+        case 'customAttributes/listResourceCustomAttributesFailure':
+            return { ...state, isFetchingResourceCustomAttributes: false };
+        case 'customAttributes/listSecondaryResourceCustomAttributesSuccess':
+            return { ...state, secondaryResourceCustomAttributes: (a.payload as unknown[]) ?? [] };
+        case 'customAttributes/loadCustomAttributeContent': {
+            const payload = a.payload as CustomAttributesTestState['resourceCustomAttributesContents'][number] | undefined;
+            if (!payload) return state;
+            const loadIdx = state.resourceCustomAttributesContents.findIndex(
+                (c) => c.resource === payload.resource && c.resourceUuid === payload.resourceUuid,
+            );
+            if (loadIdx === -1) {
+                return {
+                    ...state,
+                    resourceCustomAttributesContents: [...state.resourceCustomAttributesContents, payload],
+                };
+            }
+            return {
+                ...state,
+                resourceCustomAttributesContents: state.resourceCustomAttributesContents.map((c, i) =>
+                    i === loadIdx ? { ...c, customAttributes: payload.customAttributes } : c,
+                ),
+            };
+        }
+        case 'customAttributes/updateCustomAttributeContent':
+            return { ...state, isUpdatingContent: true };
+        case 'customAttributes/updateCustomAttributeContentSuccess':
+        case 'customAttributes/updateCustomAttributeContentFailure':
+            return { ...state, isUpdatingContent: false };
+        case 'customAttributes/removeCustomAttributeContent':
+            return { ...state, isUpdatingContent: true };
+        case 'customAttributes/removeCustomAttributeContentSuccess':
+        case 'customAttributes/removeCustomAttributeContentFailure':
+            return { ...state, isUpdatingContent: false };
+        default:
+            return state;
+    }
+}
+
+export type ConnectorsTestState = {
+    callbackData: { [key: string]: unknown };
+    isRunningCallback: { [key: string]: boolean };
+    connectInfo?: ConnectInfoDto[];
+    connector?: ConnectorResponseModel;
+    connectorHealth?: HealthModel;
+};
+
+const connectorsTestInitialState: ConnectorsTestState = {
+    callbackData: {},
+    isRunningCallback: {},
+};
+
+function connectorsTestReducer(state: ConnectorsTestState = connectorsTestInitialState, action: UnknownAction): ConnectorsTestState {
+    if (action.type === 'connectors/clearConnectionDetails' || action.type === 'connectors/connectConnector') {
+        return { ...state, connectInfo: undefined };
+    }
+    if (action.type === 'connectors/connectConnectorSuccess') {
+        const connectAction = action as { type: string; payload?: { connectInfo?: ConnectInfoDto[] } };
+        return { ...state, connectInfo: connectAction.payload?.connectInfo };
+    }
+    const a = action as { type: string; payload?: { callbackId: string; data?: unknown } };
+    if (a.type === 'connectors/clearCallbackData') {
+        return { ...state, callbackData: {} };
+    }
+    if (a.type === 'connectors/callbackSuccess' && a.payload) {
+        return {
+            ...state,
+            callbackData: { ...state.callbackData, [a.payload.callbackId]: a.payload.data },
+            isRunningCallback: { ...state.isRunningCallback, [a.payload.callbackId]: false },
+        };
+    }
+    if (a.type === 'connectors/callbackFailure' && a.payload?.callbackId) {
+        return {
+            ...state,
+            isRunningCallback: { ...state.isRunningCallback, [a.payload.callbackId]: false },
+        };
+    }
+    if (a.type === 'connectors/callbackConnector' || a.type === 'connectors/callbackResource') {
+        const callbackId = a.payload?.callbackId;
+        if (callbackId) {
+            return {
+                ...state,
+                callbackData: { ...state.callbackData, [callbackId]: undefined },
+                isRunningCallback: { ...state.isRunningCallback, [callbackId]: true },
+            };
+        }
+    }
+    return state;
+}
+
+export type SecretsTestState = {
+    syncVaultProfileAttributeDescriptors: unknown[];
+    isFetchingSyncVaultProfileAttributes: boolean;
+    secretCreationAttributeDescriptors?: unknown[];
+    isFetchingSecretCreationAttributes?: boolean;
+};
+
+const secretsTestInitialState: SecretsTestState = {
+    syncVaultProfileAttributeDescriptors: [],
+    isFetchingSyncVaultProfileAttributes: false,
+    secretCreationAttributeDescriptors: [],
+    isFetchingSecretCreationAttributes: false,
+};
+
+function secretsTestReducer(state: SecretsTestState | undefined, _action: UnknownAction): SecretsTestState {
+    return state ?? secretsTestInitialState;
+}
+
+export type CryptoAssetsTestState = {
+    assetsData?: unknown;
+    assetDetail?: unknown;
+    assetDetailError?: string;
+    assetDetailErrorStatusCode?: number;
+    isFetchingList: boolean;
+    isFetchingDetail: boolean;
+    pqcExplanation?: unknown;
+    pqcExplanationLock?: unknown;
+    isFetchingPqcExplanation: boolean;
+};
+
+const cryptoAssetsTestInitialState: CryptoAssetsTestState = {
+    isFetchingList: false,
+    isFetchingDetail: false,
+    isFetchingPqcExplanation: false,
+};
+
+function cryptoAssetsTestReducer(state: CryptoAssetsTestState | undefined, _action: UnknownAction): CryptoAssetsTestState {
+    return state ?? cryptoAssetsTestInitialState;
+}
+
+export type VaultProfilesTestState = {
+    vaultProfiles: unknown[];
+};
+
+const vaultProfilesTestInitialState: VaultProfilesTestState = {
+    vaultProfiles: [],
+};
+
+function vaultProfilesTestReducer(state: VaultProfilesTestState | undefined, _action: UnknownAction): VaultProfilesTestState {
+    return state ?? vaultProfilesTestInitialState;
+}
+
+export type TablePaginationTestState = {
+    byKey: Record<string, { page: number; pageSize: number; search?: string; sortColumn?: string; sortDirection?: 'asc' | 'desc' }>;
+    activeRootRoute?: string;
+};
+
+const tablePaginationTestInitialState: TablePaginationTestState = {
+    byKey: {},
+    activeRootRoute: undefined,
+};
+
+function tablePaginationTestReducer(
+    state: TablePaginationTestState = tablePaginationTestInitialState,
+    action: UnknownAction,
+): TablePaginationTestState {
+    const a = action as {
+        type: string;
+        payload?: {
+            key?: string;
+            page: number;
+            pageSize: number;
+            search?: string;
+            sortColumn?: string;
+            sortDirection?: 'asc' | 'desc';
+            rootRoute?: string;
+        };
+    };
+
+    if (a.type === 'tablePagination/setPagination' && a.payload?.key) {
+        return {
+            ...state,
+            byKey: {
+                ...state.byKey,
+                [a.payload.key]: {
+                    ...state.byKey[a.payload.key],
+                    page: a.payload.page,
+                    pageSize: a.payload.pageSize,
+                },
+            },
+        };
+    }
+
+    if (a.type === 'tablePagination/setSearch' && a.payload?.key) {
+        const prev = state.byKey[a.payload.key] ?? { page: 1, pageSize: 10 };
+        return {
+            ...state,
+            byKey: { ...state.byKey, [a.payload.key]: { ...prev, search: a.payload.search } },
+        };
+    }
+
+    if (a.type === 'tablePagination/setSort' && a.payload?.key) {
+        const prev = state.byKey[a.payload.key] ?? { page: 1, pageSize: 10 };
+        return {
+            ...state,
+            byKey: {
+                ...state.byKey,
+                [a.payload.key]: { ...prev, sortColumn: a.payload.sortColumn, sortDirection: a.payload.sortDirection },
+            },
+        };
+    }
+
+    if (a.type === 'tablePagination/clearPagination' && a.payload?.key) {
+        const nextByKey = { ...state.byKey };
+        delete nextByKey[a.payload.key];
+        return {
+            ...state,
+            byKey: nextByKey,
+        };
+    }
+
+    if (a.type === 'tablePagination/clearPaginationByRootRoute' && a.payload?.rootRoute) {
+        const rootRoutePrefix = `/${a.payload.rootRoute}`;
+        const byKey = Object.fromEntries(
+            Object.entries(state.byKey).filter(
+                ([key]) =>
+                    !key.startsWith(`custom-table-pagination:${rootRoutePrefix}`) &&
+                    !key.startsWith(`paged-custom-table-pagination:${rootRoutePrefix}`),
+            ),
+        );
+
+        return {
+            ...state,
+            byKey,
+        };
+    }
+
+    if (a.type === 'tablePagination/setActiveRootRoute' && a.payload?.rootRoute) {
+        return {
+            ...state,
+            activeRootRoute: a.payload.rootRoute,
+        };
+    }
+
+    return state;
+}
+
+export type AlertsTestState = {
+    messages: Array<{ id: number; message: string; time: number; color: 'success' | 'danger' | 'info'; isHiding?: boolean }>;
+    msgId: number;
+};
+
+const alertsTestInitialState: AlertsTestState = {
+    messages: [],
+    msgId: 0,
+};
+
+function alertsTestReducer(state: AlertsTestState = alertsTestInitialState, action: UnknownAction): AlertsTestState {
+    if (action.type === 'alerts/dismiss' && typeof action.payload === 'number') {
+        return { ...state, messages: state.messages.filter((m) => m.id !== action.payload) };
+    }
+    if (action.type === 'alerts/hide' && typeof action.payload === 'number') {
+        return {
+            ...state,
+            messages: state.messages.map((m) => (m.id === action.payload ? { ...m, isHiding: true } : m)),
+        };
+    }
+    if (action.type === 'alerts/dismissAll') {
+        return { ...state, messages: [] };
+    }
+    return state;
+}
+
+type PagingObject = {
+    totalItems: number;
+    checkedRows: string[];
+    isFetchingList: boolean;
+    pageNumber: number;
+    pageSize: number;
+    filtersSnapshot?: string;
+};
+type PagingEntry = { entity: number; paging: PagingObject };
+
+export type PagingsTestState = { pagings: PagingEntry[] };
+
+const EMPTY_PAGING_OBJ: PagingObject = { totalItems: 0, checkedRows: [], isFetchingList: false, pageNumber: 1, pageSize: 10 };
+
+const pagingsTestInitialState: PagingsTestState = { pagings: [] };
+
+function updatePaging(state: PagingsTestState, entity: number, fn: (p: PagingObject) => PagingObject): PagingsTestState {
+    const idx = state.pagings.findIndex((p) => p.entity === entity);
+    const existing = idx === -1 ? EMPTY_PAGING_OBJ : state.pagings[idx].paging;
+    const next: PagingEntry = { entity, paging: fn(existing) };
+    if (idx !== -1) {
+        return { pagings: [...state.pagings.slice(0, idx), next, ...state.pagings.slice(idx + 1)] };
+    }
+    return { pagings: [...state.pagings, next] };
+}
+
+function pagingsTestReducer(state: PagingsTestState = pagingsTestInitialState, action: UnknownAction): PagingsTestState {
+    const a = action as {
+        type: string;
+        payload?:
+            | number
+            | {
+                  entity: number;
+                  totalItems?: number;
+                  checkedRows?: string[];
+                  pageNumber?: number;
+                  pageSize?: number;
+                  filtersSnapshot?: string;
+              };
+    };
+    const data = a.payload as {
+        entity: number;
+        totalItems?: number;
+        checkedRows?: string[];
+        pageNumber?: number;
+        pageSize?: number;
+        filtersSnapshot?: string;
+    };
+    if (a.type === 'pagings/list') return updatePaging(state, a.payload as number, (p) => ({ ...p, isFetchingList: true }));
+    if (a.type === 'pagings/listSuccess')
+        return updatePaging(state, data.entity, (p) => ({ ...p, isFetchingList: false, totalItems: data.totalItems ?? 0 }));
+    if (a.type === 'pagings/listFailure') return updatePaging(state, a.payload as number, (p) => ({ ...p, isFetchingList: false }));
+    if (a.type === 'pagings/setCheckedRows')
+        return updatePaging(state, data.entity, (p) => ({ ...p, checkedRows: data.checkedRows ?? [] }));
+    if (a.type === 'pagings/setPagination')
+        return updatePaging(state, data.entity, (p) => ({
+            ...p,
+            pageNumber: data.pageNumber ?? p.pageNumber,
+            pageSize: data.pageSize ?? p.pageSize,
+        }));
+    if (a.type === 'pagings/setFiltersSnapshot')
+        return updatePaging(state, data.entity, (p) => ({ ...p, filtersSnapshot: data.filtersSnapshot }));
+    if (a.type === 'pagings/restorePaging')
+        return updatePaging(state, data.entity, (p) => ({
+            ...p,
+            pageNumber: data.pageNumber ?? p.pageNumber,
+            pageSize: data.pageSize ?? p.pageSize,
+            totalItems: data.totalItems ?? p.totalItems,
+            filtersSnapshot: data.filtersSnapshot,
+        }));
+    if (a.type === 'pagings/resetPaging')
+        return updatePaging(state, data.entity, (p) => ({
+            ...p,
+            pageNumber: 1,
+            pageSize: 10,
+            checkedRows: [],
+            filtersSnapshot: undefined,
+        }));
+    return state;
+}
+
+export type CertificatesTestState = {
+    finalizingIssueCertificateUuids: string[];
+    confirmingRevokeCertificateUuids: string[];
+    cancelingPendingCertificateUuids: string[];
+    issuanceAttributes: Record<string, any[]>;
+    registerAttributes: Record<string, any[]>;
+    isFetchingRegisterAttributes: boolean;
+    csrAttributeDescriptors: any[];
+    isFetchingCsrAttributes: boolean;
+    isIssuing: boolean;
+    isRegistering: boolean;
+    registerErrorMessage?: string;
+    isRenewing?: boolean;
+    renewErrorMessage?: string;
+    isRekeying?: boolean;
+    rekeyErrorMessage?: string;
+    issueValidationErrors?: string[];
+    issueErrorMessage?: string;
+    issueWarnings?: { certificateUuid: string; messages: string[] };
+    revocationAttributes: AttributeDescriptorModel[];
+    isFetchingRevocationAttributes: boolean;
+    renewAttributes: AttributeDescriptorModel[];
+    isFetchingRenewAttributes: boolean;
+    identifyAttributes: AttributeDescriptorModel[];
+    isFetchingIdentifyAttributes: boolean;
+};
+
+const certificatesTestInitialState: CertificatesTestState = {
+    finalizingIssueCertificateUuids: [],
+    confirmingRevokeCertificateUuids: [],
+    cancelingPendingCertificateUuids: [],
+    issuanceAttributes: {},
+    registerAttributes: {},
+    isFetchingRegisterAttributes: false,
+    csrAttributeDescriptors: [],
+    isFetchingCsrAttributes: false,
+    isIssuing: false,
+    isRegistering: false,
+    issueValidationErrors: undefined,
+    issueErrorMessage: undefined,
+    issueWarnings: undefined,
+    revocationAttributes: [],
+    isFetchingRevocationAttributes: false,
+    renewAttributes: [],
+    isFetchingRenewAttributes: false,
+    identifyAttributes: [],
+    isFetchingIdentifyAttributes: false,
+};
+
+function certificatesTestReducer(state: CertificatesTestState | undefined, _action: UnknownAction): CertificatesTestState {
+    return state ?? certificatesTestInitialState;
+}
+
+export type UtilsCertificateTestState = {
+    parsedCertificate: unknown;
+};
+
+const utilsCertificateTestInitialState: UtilsCertificateTestState = {
+    parsedCertificate: undefined,
+};
+
+function utilsCertificateTestReducer(state: UtilsCertificateTestState | undefined, _action: UnknownAction): UtilsCertificateTestState {
+    return state ?? utilsCertificateTestInitialState;
+}
+
+export type UtilsActuatorTestState = {
+    health: unknown;
+};
+
+const utilsActuatorTestInitialState: UtilsActuatorTestState = {
+    health: undefined,
+};
+
+function utilsActuatorTestReducer(state: UtilsActuatorTestState | undefined, _action: UnknownAction): UtilsActuatorTestState {
+    return state ?? utilsActuatorTestInitialState;
+}
+
+export type EventHistoryTestState = {
+    eventHistory?: unknown;
+    isFetchingEventHistory: boolean;
+    objectEventHistory?: unknown;
+    isFetchingObjectEventHistory: boolean;
+    conditionFilterFieldsByResource: Record<string, unknown[]>;
+};
+
+const eventHistoryTestInitialState: EventHistoryTestState = {
+    eventHistory: undefined,
+    isFetchingEventHistory: false,
+    objectEventHistory: undefined,
+    isFetchingObjectEventHistory: false,
+    conditionFilterFieldsByResource: {},
+};
+
+function eventHistoryTestReducer(state: EventHistoryTestState | undefined, _action: UnknownAction): EventHistoryTestState {
+    return state ?? eventHistoryTestInitialState;
+}
+
+type SigningRecordsDashboardTestState = {
+    isFetching: boolean;
+    isFetchingSeries: boolean;
+    period: string;
+    statistics?: unknown;
+};
+
+const signingRecordsDashboardTestInitialState: SigningRecordsDashboardTestState = {
+    isFetching: false,
+    isFetchingSeries: false,
+    period: '24h',
+    statistics: undefined,
+};
+
+function signingRecordsDashboardTestReducer(
+    state: SigningRecordsDashboardTestState | undefined,
+    _action: UnknownAction,
+): SigningRecordsDashboardTestState {
+    return state ?? signingRecordsDashboardTestInitialState;
+}
+
+type CryptoAssetsDashboardTestState = {
+    isFetching: boolean;
+    statistics?: unknown;
+};
+
+const cryptoAssetsDashboardTestInitialState: CryptoAssetsDashboardTestState = {
+    isFetching: false,
+    statistics: undefined,
+};
+
+function cryptoAssetsDashboardTestReducer(
+    state: CryptoAssetsDashboardTestState | undefined,
+    _action: UnknownAction,
+): CryptoAssetsDashboardTestState {
+    return state ?? cryptoAssetsDashboardTestInitialState;
+}
+
+type RaProfileRequestAttributesTestState = {
+    raProfileSet?: any;
+    isUpdatingRaProfileSet: boolean;
+    updateRaProfileSetSucceeded: boolean;
+    updateRaProfileSetError?: string;
+    defaultSet?: any;
+    isFetchingDefaultSet: boolean;
+    isUpdatingDefaultSet: boolean;
+    updateDefaultSetSucceeded: boolean;
+    updateDefaultSetError?: string;
+};
+
+const raProfileRequestAttributesTestInitialState: RaProfileRequestAttributesTestState = {
+    isUpdatingRaProfileSet: false,
+    updateRaProfileSetSucceeded: false,
+    isFetchingDefaultSet: false,
+    isUpdatingDefaultSet: false,
+    updateDefaultSetSucceeded: false,
+};
+
+function raProfileRequestAttributesTestReducer(
+    state: RaProfileRequestAttributesTestState | undefined,
+    action: UnknownAction,
+): RaProfileRequestAttributesTestState {
+    const current = state ?? raProfileRequestAttributesTestInitialState;
+    // Mirror the real slice's pending flag so CT can observe that a save was dispatched. CT runs no
+    // epics, so the flag stays true — enough to assert the auto-save fired and disabled the editor.
+    if (action.type === 'raProfileRequestAttributes/updatePlatformDefaultRequestAttributes') {
+        return { ...current, isUpdatingDefaultSet: true, updateDefaultSetSucceeded: false, updateDefaultSetError: undefined };
+    }
+    if (action.type === 'raProfileRequestAttributes/updateRaProfileRequestAttributes') {
+        return { ...current, isUpdatingRaProfileSet: true, updateRaProfileSetSucceeded: false, updateRaProfileSetError: undefined };
+    }
+    // Failure transitions too, so CT can drive a backend rejection and observe the rollback.
+    const failure = action as { type: string; payload?: { error?: string } };
+    if (failure.type === 'raProfileRequestAttributes/updatePlatformDefaultRequestAttributesFailure') {
+        return { ...current, isUpdatingDefaultSet: false, updateDefaultSetSucceeded: false, updateDefaultSetError: failure.payload?.error };
+    }
+    if (action.type === 'raProfileRequestAttributes/updateRaProfileRequestAttributesSuccess') {
+        return { ...current, isUpdatingRaProfileSet: false, updateRaProfileSetSucceeded: true };
+    }
+    if (failure.type === 'raProfileRequestAttributes/updateRaProfileRequestAttributesFailure') {
+        return {
+            ...current,
+            isUpdatingRaProfileSet: false,
+            updateRaProfileSetSucceeded: false,
+            updateRaProfileSetError: failure.payload?.error,
+        };
+    }
+    return current;
+}
+
+export type RaProfilesTestState = {
+    isUpdating: boolean;
+    isCreating: boolean;
+    createRaProfileSucceeded: boolean;
+    createdRaProfileUuid: string | null;
+    raProfiles: any[];
+    raProfile?: any;
+};
+
+const raProfilesTestInitialState: RaProfilesTestState = {
+    isUpdating: false,
+    isCreating: false,
+    createRaProfileSucceeded: false,
+    createdRaProfileUuid: null,
+    raProfiles: [],
+};
+
+function raProfilesTestReducer(state: RaProfilesTestState | undefined, action: UnknownAction): RaProfilesTestState {
+    const current = state ?? raProfilesTestInitialState;
+    // Mirror the real slice's create lifecycle so CT can drive the create → request-attributes PATCH →
+    // redirect chain: the component's finish-hooks fire on the isCreating true -> false transition, so
+    // the test dispatches these actions to stand in for the (epic-less) create outcome.
+    const a = action as { type: string; payload?: { uuid?: string } };
+    switch (a.type) {
+        case 'raprofiles/createRaProfile':
+            return { ...current, isCreating: true, createRaProfileSucceeded: false, createdRaProfileUuid: null };
+        case 'raprofiles/createRaProfileSuccess':
+            return {
+                ...current,
+                isCreating: false,
+                createRaProfileSucceeded: true,
+                createdRaProfileUuid: a.payload?.uuid ?? null,
+            };
+        case 'raprofiles/createRaProfileFailure':
+            return { ...current, isCreating: false, createRaProfileSucceeded: false, createdRaProfileUuid: null };
+        case 'raprofiles/updateRaProfile':
+            return { ...current, isUpdating: true };
+        default:
+            return current;
+    }
+}
+
+type AuthoritiesTestState = {
+    authorities: any[];
+    raProfileAttributeDescriptors?: any[];
+    isFetchingRAProfilesAttributesDescriptors: boolean;
+};
+
+const authoritiesTestInitialState: AuthoritiesTestState = {
+    authorities: [],
+    raProfileAttributeDescriptors: undefined,
+    isFetchingRAProfilesAttributesDescriptors: false,
+};
+
+function authoritiesTestReducer(state: AuthoritiesTestState | undefined, _action: UnknownAction): AuthoritiesTestState {
+    return state ?? authoritiesTestInitialState;
+}
+
+export type UtilsCertificateRequestTestState = {
+    parsedCertificateRequest?: any;
+    parseError?: string;
+};
+
+const utilsCertificateRequestTestInitialState: UtilsCertificateRequestTestState = {
+    parsedCertificateRequest: undefined,
+    parseError: undefined,
+};
+
+function utilsCertificateRequestTestReducer(
+    state: UtilsCertificateRequestTestState | undefined,
+    _action: UnknownAction,
+): UtilsCertificateRequestTestState {
+    return state ?? utilsCertificateRequestTestInitialState;
+}
+
+export type CryptographicOperationsTestState = {
+    signatureAttributeDescriptors: any[];
+    altSignatureAttributeDescriptors: any[];
+};
+
+const cryptographicOperationsTestInitialState: CryptographicOperationsTestState = {
+    signatureAttributeDescriptors: [],
+    altSignatureAttributeDescriptors: [],
+};
+
+function cryptographicOperationsTestReducer(
+    state: CryptographicOperationsTestState | undefined,
+    _action: UnknownAction,
+): CryptographicOperationsTestState {
+    return state ?? cryptographicOperationsTestInitialState;
+}
+
+// Reducer key must match the real slice.name ('tokenprofiles', lowercase p) so the real
+// token-profiles selectors (used by RenderTokenProfile) can find this state.
+export type TokenProfilesTestState = {
+    tokenProfiles: any[];
+};
+
+const tokenProfilesTestInitialState: TokenProfilesTestState = {
+    tokenProfiles: [],
+};
+
+function tokenProfilesTestReducer(state: TokenProfilesTestState | undefined, _action: UnknownAction): TokenProfilesTestState {
+    return state ?? tokenProfilesTestInitialState;
+}
+
+// Reducer key must match the real slice.name ('tokens') so the real token selectors (used by the
+// token-profile form) can find this state — that duck's `state` selector has no initial-state
+// fallback, so a missing slice would throw rather than read as empty.
+export type TokensTestState = {
+    tokens: any[];
+    tokenProfileAttributeDescriptors?: any[];
+    isFetchingTokenProfileAttributesDescriptors: boolean;
+};
+
+const tokensTestInitialState: TokensTestState = {
+    tokens: [],
+    tokenProfileAttributeDescriptors: [],
+    isFetchingTokenProfileAttributesDescriptors: false,
+};
+
+function tokensTestReducer(state: TokensTestState | undefined, _action: UnknownAction): TokensTestState {
+    return state ?? tokensTestInitialState;
+}
+
+// Reducer key must match the real slice.name ('cryptographicKeys') so the real
+// cryptographic-keys selectors (used by RenderRequestKey) can find this state.
+export type CryptographicKeysTestState = {
+    cryptographicKeyPairs: any[];
+    altCryptographicKeyPairs: any[];
+};
+
+const cryptographicKeysTestInitialState: CryptographicKeysTestState = {
+    cryptographicKeyPairs: [],
+    altCryptographicKeyPairs: [],
+};
+
+function cryptographicKeysTestReducer(state: CryptographicKeysTestState | undefined, _action: UnknownAction): CryptographicKeysTestState {
+    return state ?? cryptographicKeysTestInitialState;
+}
+
+export type SettingsTestState = {
+    platformSettings?: any;
+    isFetchingPlatform: boolean;
+    isUpdatingPlatform: boolean;
+};
+
+const settingsTestInitialState: SettingsTestState = {
+    platformSettings: undefined,
+    isFetchingPlatform: false,
+    isUpdatingPlatform: false,
+};
+
+function settingsTestReducer(state: SettingsTestState | undefined, _action: UnknownAction): SettingsTestState {
+    return state ?? settingsTestInitialState;
+}
+
+// Reducer key must match the real slice.name ('users') so the real user selectors
+// (used by the certificate form's optional owner field) can find this state.
+export type UsersTestState = {
+    users: any[];
+};
+
+const usersTestInitialState: UsersTestState = {
+    users: [],
+};
+
+function usersTestReducer(state: UsersTestState | undefined, _action: UnknownAction): UsersTestState {
+    return state ?? usersTestInitialState;
+}
+
+export type RolesTestState = {
+    role?: RoleDetailModel;
+    rolePermissions?: { uuid: string; permissions: SubjectPermissionsModel };
+    isFetchingDetail: boolean;
+    isFetchingPermissions: boolean;
+    isCreating: boolean;
+    isUpdating: boolean;
+    isUpdatingPermissions: boolean;
+};
+
+const rolesTestInitialState: RolesTestState = {
+    isFetchingDetail: false,
+    isFetchingPermissions: false,
+    isCreating: false,
+    isUpdating: false,
+    isUpdatingPermissions: false,
+};
+
+function rolesTestReducer(state: RolesTestState | undefined, _action: UnknownAction): RolesTestState {
+    return state ?? rolesTestInitialState;
+}
+
+// Reducer key must match the real slice.name ('certificateGroups') so the real
+// certificate-group selectors (used by the certificate form's optional groups field) can find this state.
+export type CertificateGroupsTestState = {
+    certificateGroups: any[];
+};
+
+const certificateGroupsTestInitialState: CertificateGroupsTestState = {
+    certificateGroups: [],
+};
+
+function certificateGroupsTestReducer(state: CertificateGroupsTestState | undefined, _action: UnknownAction): CertificateGroupsTestState {
+    return state ?? certificateGroupsTestInitialState;
+}
+
+export type ApprovalsTestState = {
+    approvalDetails?: any;
+    approvals: any[];
+    approvalsTotalItems: number;
+    userApprovals: any[];
+    userApprovalsTotalItems: number;
+    isApproving: boolean;
+    isRejecting: boolean;
+    isFetchingDetail: boolean;
+    isFetchingList: boolean;
+    isFetchingUserList: boolean;
+};
+
+const approvalsTestInitialState: ApprovalsTestState = {
+    approvalDetails: undefined,
+    approvals: [],
+    approvalsTotalItems: 0,
+    userApprovals: [],
+    userApprovalsTotalItems: 0,
+    isApproving: false,
+    isRejecting: false,
+    isFetchingDetail: false,
+    isFetchingList: false,
+    isFetchingUserList: false,
+};
+
+function approvalsTestReducer(state: ApprovalsTestState | undefined, _action: UnknownAction): ApprovalsTestState {
+    return state ?? approvalsTestInitialState;
+}
+
+// Reducer key must match the real slice.name ('oids') so the real OID selectors (used by
+// useOidMappingOptions and RequestAttributeMappingBadge) read this state. Every field of the real
+// duck's State is mirrored here: once this slice exists in the store the duck's `?? initialState`
+// fallback no longer applies, so a missing field would read undefined in a real selector.
+export type OidsTestState = {
+    oid?: any;
+    oids: any[];
+    oidsByCategory: Record<string, any[]>;
+    oidsByCategoryError: Record<string, boolean>;
+    oidsByCategoryLoaded: Record<string, boolean>;
+    systemOids: any[];
+    systemOidsLoaded: boolean;
+    systemOidsError: boolean;
+    extensionOidDetails: Record<string, any>;
+    extensionOidDetailsRequested: Record<string, boolean>;
+    extensionOidDetailsFailed: Record<string, string>;
+    isFetching: boolean;
+    isCreating: boolean;
+    createOidSucceeded: boolean;
+    isUpdating: boolean;
+    updateOidSucceeded: boolean;
+    isDeleting: boolean;
+    valueSchemaError?: { requestId: string; message: string };
+};
+
+const oidsTestInitialState: OidsTestState = {
+    oids: [],
+    oidsByCategory: {},
+    oidsByCategoryError: {},
+    oidsByCategoryLoaded: {},
+    systemOids: [],
+    systemOidsLoaded: false,
+    systemOidsError: false,
+    extensionOidDetails: {},
+    extensionOidDetailsRequested: {},
+    extensionOidDetailsFailed: {},
+    isFetching: false,
+    isCreating: false,
+    createOidSucceeded: false,
+    isUpdating: false,
+    updateOidSucceeded: false,
+    isDeleting: false,
+};
+
+function oidsTestReducer(state: OidsTestState | undefined, _action: UnknownAction): OidsTestState {
+    return state ?? oidsTestInitialState;
+}
+
+// Reducer key must match the real slice.name ('discoveries') so the real discovery selectors
+// (used by the discovered certificates widget) can find this state. Every getDiscoveryCertificates
+// request is recorded so tests can assert which query params the widget sent; apart from that the
+// request/success transitions mirror the real reducer (src/ducks/discoveries.ts), so tests seed rows
+// by dispatching getDiscoveryCertificatesSuccess rather than by preloading them.
+export type DiscoveryCertificatesRequestTest = {
+    uuid: string;
+    itemsPerPage?: number;
+    pageNumber?: number;
+    newlyDiscovered?: boolean;
+};
+
+export type DiscoveriesTestState = {
+    discoveryCertificates?: {
+        totalItems?: number;
+        certificates: any[];
+    };
+    isFetchingDiscoveryCertificates: boolean;
+    certificatesRequests: DiscoveryCertificatesRequestTest[];
+};
+
+const discoveriesTestInitialState: DiscoveriesTestState = {
+    discoveryCertificates: undefined,
+    isFetchingDiscoveryCertificates: false,
+    certificatesRequests: [],
+};
+
+function discoveriesTestReducer(state: DiscoveriesTestState = discoveriesTestInitialState, action: UnknownAction): DiscoveriesTestState {
+    const a = action as { type: string; payload?: unknown };
+    if (a.type === 'discoveries/getDiscoveryCertificates' && a.payload) {
+        return {
+            ...state,
+            discoveryCertificates: undefined,
+            isFetchingDiscoveryCertificates: true,
+            certificatesRequests: [...state.certificatesRequests, a.payload as DiscoveryCertificatesRequestTest],
+        };
+    }
+    if (a.type === 'discoveries/getDiscoveryCertificatesSuccess') {
+        return {
+            ...state,
+            discoveryCertificates: a.payload as DiscoveriesTestState['discoveryCertificates'],
+            isFetchingDiscoveryCertificates: false,
+        };
+    }
+    return state;
+}
+
+// Reducer key must match the real slice.name ('rules') so the real rules selectors (used by
+// TriggerEditorWidget) read this state. This is a subset of the real slice `State` in ducks/rules.ts,
+// not a mirror of it: the `state` selector is a plain property read, so an omitted scalar just yields
+// `undefined`. Array-typed fields are the ones that must be present, because consumers iterate them.
+export type RulesTestState = {
+    rules: unknown[];
+    triggerHistories: unknown[];
+    triggerHistorySummary?: unknown;
+    eventTriggerAssociation?: EventTriggerAssociationModel;
+    ruleDetails?: unknown;
+    executions: unknown[];
+    executionDetails?: unknown;
+    actionsList: unknown[];
+    actionDetails?: unknown;
+    conditions: unknown[];
+    conditionDetails?: unknown;
+    triggers: TriggerModel[];
+    triggerDetails?: unknown;
+    isFetchingTriggers: boolean;
+    isFetchingEventTriggersAssociation: boolean;
+    isUpdatingEventTriggersAssociation: boolean;
+    associateEventTriggersSucceeded: boolean;
+};
+
+const rulesTestInitialState: RulesTestState = {
+    rules: [],
+    triggerHistories: [],
+    triggerHistorySummary: undefined,
+    eventTriggerAssociation: undefined,
+    ruleDetails: undefined,
+    executions: [],
+    executionDetails: undefined,
+    actionsList: [],
+    actionDetails: undefined,
+    conditions: [],
+    conditionDetails: undefined,
+    triggers: [],
+    triggerDetails: undefined,
+    isFetchingTriggers: false,
+    isFetchingEventTriggersAssociation: false,
+    isUpdatingEventTriggersAssociation: false,
+    associateEventTriggersSucceeded: false,
+};
+
+function rulesTestReducer(state: RulesTestState | undefined, _action: UnknownAction): RulesTestState {
+    return state ?? rulesTestInitialState;
+}
+
+export type CommentsTestPage = {
+    comments: Array<{ uuid: string }>;
+    totalItems: number;
+    totalPages: number;
+    pageNumber: number;
+    itemsPerPage: number;
+    firstPage: number;
+    missingAnchor?: string;
+    isFetching: boolean;
+    isPosting: boolean;
+    postingDenied?: string;
+    postSucceeded?: boolean;
+    sortDirection?: string;
+};
+
+export type CommentsTestState = {
+    threads: Record<string, CommentsTestPage & { lock?: unknown }>;
+    replies: Record<string, CommentsTestPage>;
+    busy: Record<string, boolean>;
+    /** The direction chosen per panel key, as the real slice holds it. */
+    sortDirections: Record<string, string>;
+    /** Every `comments/*` action the panel dispatched, so a test can assert the request without an epic. */
+    dispatched: Array<{ type: string; payload?: unknown }>;
+};
+
+const commentsTestInitialState: CommentsTestState = {
+    threads: {},
+    replies: {},
+    busy: {},
+    sortDirections: {},
+    dispatched: [],
+};
+
+const emptyCommentsTestPage: CommentsTestPage = {
+    comments: [],
+    totalItems: 0,
+    totalPages: 0,
+    pageNumber: 1,
+    itemsPerPage: 10,
+    firstPage: 1,
+    isFetching: false,
+    isPosting: false,
+};
+
+type CommentsPostPayload = { key?: string; resource?: string; objectUuid?: string; parentUuid?: string };
+
+type CommentsPagePayload = {
+    key?: string;
+    rootUuid?: string;
+    page: Omit<CommentsTestPage, 'firstPage' | 'isFetching' | 'isPosting'>;
+    sortDirection?: string;
+    anchorUuid?: string;
+};
+
+/**
+ * The page rule the real slice applies, so a test can deliver a page and see the list the panel would show: a later
+ * page read in the same direction joins the list, anything else (a first page, an anchored page, the other direction)
+ * replaces it.
+ */
+function withPage(state: CommentsTestState, payload: CommentsPagePayload): CommentsTestState {
+    const { page, anchorUuid } = payload;
+    const isThreads = payload.rootUuid === undefined;
+    const id = payload.rootUuid ?? payload.key ?? '';
+    const target = (isThreads ? state.threads[id] : state.replies[id]) ?? emptyCommentsTestPage;
+    const sameOrder = payload.sortDirection === (target.sortDirection ?? (isThreads ? state.sortDirections[id] : undefined) ?? 'desc');
+    const append = page.pageNumber > 1 && anchorUuid === undefined && sameOrder;
+    const loaded = append ? target.comments : [];
+    const seen = new Set(loaded.map((comment) => comment.uuid));
+    const anchorShown = anchorUuid === undefined || page.comments.some((comment) => comment.uuid === anchorUuid);
+    const next = {
+        ...target,
+        ...page,
+        comments: [...loaded, ...page.comments.filter((comment) => !seen.has(comment.uuid))],
+        firstPage: append ? target.firstPage : page.pageNumber,
+        missingAnchor: anchorShown ? undefined : anchorUuid,
+        isFetching: false,
+        sortDirection: payload.sortDirection,
+    };
+    return isThreads ? { ...state, threads: { ...state.threads, [id]: next } } : { ...state, replies: { ...state.replies, [id]: next } };
+}
+
+/** A reply post lands on its thread, a root post on the panel: the same routing the real slice does. */
+function withPostState(state: CommentsTestState, payload: CommentsPostPayload, change: Partial<CommentsTestPage>): CommentsTestState {
+    if (payload.parentUuid) {
+        const target = state.replies[payload.parentUuid] ?? emptyCommentsTestPage;
+        return { ...state, replies: { ...state.replies, [payload.parentUuid]: { ...target, ...change } } };
+    }
+    const key = payload.key ?? `${payload.resource}/${payload.objectUuid}`;
+    const target = state.threads[key] ?? emptyCommentsTestPage;
+    return { ...state, threads: { ...state.threads, [key]: { ...target, ...change } } };
+}
+
+function commentsTestReducer(state: CommentsTestState | undefined, action: UnknownAction): CommentsTestState {
+    const current = state ?? commentsTestInitialState;
+    if (!action.type.startsWith('comments/')) return current;
+    const recorded = { ...current, dispatched: [...current.dispatched, { type: action.type, payload: action.payload }] };
+    // The post lifecycle is applied, not only recorded: the composer clears its draft on the postSucceeded
+    // false -> true transition, so a test has to be able to drive that transition.
+    const payload = (action.payload ?? {}) as CommentsPostPayload;
+    if (action.type === 'comments/createComment') return withPostState(recorded, payload, { isPosting: true, postSucceeded: false });
+    if (action.type === 'comments/createCommentSuccess') return withPostState(recorded, payload, { isPosting: false, postSucceeded: true });
+    if (action.type === 'comments/changeSortDirection') {
+        const { resource, objectUuid, sortDirection } = action.payload as { resource: string; objectUuid: string; sortDirection: string };
+        return { ...recorded, sortDirections: { ...recorded.sortDirections, [`${resource}/${objectUuid}`]: sortDirection } };
+    }
+    if (action.type === 'comments/listThreadsSuccess' || action.type === 'comments/listRepliesSuccess') {
+        return withPage(recorded, action.payload as CommentsPagePayload);
+    }
+    if (action.type === 'comments/listRepliesFailure') {
+        const { rootUuid, missingAnchor } = action.payload as { rootUuid: string; missingAnchor?: string };
+        const target = recorded.replies[rootUuid] ?? emptyCommentsTestPage;
+        return { ...recorded, replies: { ...recorded.replies, [rootUuid]: { ...target, isFetching: false, missingAnchor } } };
+    }
+
+    return recorded;
+}
+
+// Reducer key must match the real slice.name ('listViews') so the real list-view selectors — the ones
+// components/ViewTabs reads — find this state. Component tests run no epics, so nothing carries a
+// mutation past its request action: the views are preloaded, and every listViews action the strip
+// dispatches is recorded instead, which is what lets a test assert what was asked for.
+export type ListViewsTestState = {
+    byResource: Record<
+        string,
+        {
+            views: ListViewDto[];
+            isFetching: boolean;
+            hasLoaded: boolean;
+            isMutating: boolean;
+            isStale?: boolean;
+            createdUuid?: string;
+            rollback?: ListViewDto[];
+        }
+    >;
+    error?: string;
+    dispatched: Array<{ type: string; payload?: unknown }>;
+};
+
+const listViewsTestInitialState: ListViewsTestState = {
+    byResource: {},
+    dispatched: [],
+};
+
+// The uuid an optimistic create carries, mirroring PENDING_VIEW_UUID in src/ducks/listViews.ts. Spelt
+// out rather than imported, because this file must not pull in the real ducks.
+const PENDING_LIST_VIEW_UUID = 'pending-view';
+
+type StatusedEntry = {
+    fieldSource: string;
+    fieldIdentifier: string;
+    condition?: string;
+    value?: unknown;
+    status?: string;
+    rebind?: boolean;
+};
+
+// Mirrors withWrittenStatuses in src/utils/listViews.ts, spelt out for the same reason: a spec loads this file in Node,
+// where importing utils/listViews fails on the generated types' directory import.
+function settleWrittenStatuses(entries: StatusedEntry[] | undefined, previous: StatusedEntry[] | undefined): StatusedEntry[] | undefined {
+    const keyOf = (entry: StatusedEntry) =>
+        JSON.stringify([entry.fieldSource, entry.fieldIdentifier, entry.condition, entry.value ?? null]);
+    const statuses = new Map((previous ?? []).map((entry) => [keyOf(entry), entry.status]));
+    return entries?.map(({ rebind, status, ...entry }) => {
+        const settled = rebind ? 'available' : (statuses.get(keyOf(entry)) ?? status);
+        return settled ? { ...entry, status: settled } : entry;
+    });
+}
+
+function withoutRebind<T extends { rebind?: boolean }>({ rebind, ...sort }: T): Omit<T, 'rebind'> {
+    return sort;
+}
+
+function listViewsTestReducer(state: ListViewsTestState = listViewsTestInitialState, action: UnknownAction): ListViewsTestState {
+    const a = action as { type: string; payload?: { resource?: string; view?: Partial<ListViewDto> } };
+    if (!a.type.startsWith('listViews/')) return state;
+
+    const recorded: ListViewsTestState = { ...state, dispatched: [...state.dispatched, { type: a.type, payload: a.payload }] };
+
+    const resource = a.payload?.resource;
+    if (!resource) return recorded;
+
+    const view = a.payload?.view;
+    const entry = recorded.byResource[resource] ?? { views: [], isFetching: false, hasLoaded: false, isMutating: false };
+    const withEntry = (next: Partial<ListViewsTestState['byResource'][string]>): ListViewsTestState => ({
+        ...recorded,
+        byResource: { ...recorded.byResource, [resource]: { ...entry, ...next } },
+    });
+
+    // Landing the view list is mirrored so a test can act on the table while it is still in flight,
+    // which is the window the strip and the header controls are held back through.
+    // Only a re-read after a set-aside answer is put in flight: the mount read is answered by the preloaded state.
+    if (a.type === 'listViews/listViews' && entry.isStale) {
+        return withEntry({ isStale: false, isFetching: true });
+    }
+
+    // `stale` stands in for the real reducer setting an answer aside because a write overlapped the read.
+    if (a.type === 'listViews/listViewsSuccess') {
+        const { views, stale } = (a.payload ?? {}) as { views?: ListViewDto[]; stale?: boolean };
+        if (stale) return withEntry({ isFetching: false, hasLoaded: true, isStale: true });
+        return withEntry({ isFetching: false, hasLoaded: true, views: views ?? entry.views });
+    }
+
+    // Only the create and delete round trips are mirrored, and only as far as the strip can observe
+    // them: a tab has to appear the moment a create is asked for, follow the uuid the API gives it and
+    // disappear again if the create fails, and a deleted tab has to come back if the delete fails.
+    // Everything else a mutation does to this slice is asserted against the real reducer in its own
+    // unit tests.
+    if (a.type === 'listViews/createView' && view) {
+        return withEntry({ isMutating: true, views: [...entry.views, { ...view, uuid: PENDING_LIST_VIEW_UUID, resource } as ListViewDto] });
+    }
+
+    if (a.type === 'listViews/createViewSuccess' && view) {
+        const created = view as ListViewDto;
+        const hasPending = entry.views.some((each) => each.uuid === PENDING_LIST_VIEW_UUID);
+
+        return withEntry({
+            isMutating: false,
+            createdUuid: created.uuid,
+            views: hasPending
+                ? entry.views.map((each) => (each.uuid === PENDING_LIST_VIEW_UUID ? created : each))
+                : [...entry.views, created],
+        });
+    }
+
+    if (a.type === 'listViews/createViewFailure') {
+        return withEntry({ isMutating: false, views: entry.views.filter((each) => each.uuid !== PENDING_LIST_VIEW_UUID) });
+    }
+
+    const uuid = (a.payload as { uuid?: string } | undefined)?.uuid;
+
+    if (a.type === 'listViews/deleteView' && uuid) {
+        return withEntry({ isMutating: true, rollback: entry.views, views: entry.views.filter((each) => each.uuid !== uuid) });
+    }
+
+    if (a.type === 'listViews/deleteViewFailure') {
+        return withEntry({ isMutating: false, views: entry.rollback ?? entry.views, rollback: undefined });
+    }
+
+    // An update is applied optimistically and held in flight until a test answers it, as the real reducer does.
+    if (a.type === 'listViews/updateView' && uuid && view) {
+        const updated = withEntry({
+            isMutating: true,
+            rollback: entry.views,
+            views: entry.views.map((each) =>
+                each.uuid === uuid
+                    ? ({
+                          ...each,
+                          ...view,
+                          columns: settleWrittenStatuses(view.columns as StatusedEntry[], each.columns as StatusedEntry[]),
+                          filters: settleWrittenStatuses(view.filters as StatusedEntry[], each.filters as StatusedEntry[]),
+                          sort: view.sort && withoutRebind(view.sort as { rebind?: boolean }),
+                      } as ListViewDto)
+                    : each,
+            ),
+        });
+        return { ...updated, error: undefined };
+    }
+
+    if (a.type === 'listViews/updateViewSuccess' && view) {
+        return withEntry({
+            isMutating: false,
+            rollback: undefined,
+            views: entry.views.map((each) => (each.uuid === view.uuid ? (view as ListViewDto) : each)),
+        });
+    }
+
+    // The real slice keeps one error for every resource, so a failed read of another resource sets it too.
+    if (a.type === 'listViews/listViewsFailure') {
+        return { ...withEntry({ isFetching: false, hasLoaded: true }), error: (a.payload as { error?: string }).error };
+    }
+
+    if (a.type === 'listViews/updateViewFailure') {
+        const failed = withEntry({ isMutating: false, views: entry.rollback ?? entry.views, rollback: undefined });
+        return { ...failed, error: (a.payload as { error?: string }).error };
+    }
+
+    return recorded;
+}
+
+export const testReducers = combineReducers({
+    raProfileRequestAttributes: raProfileRequestAttributesTestReducer,
+    userInterface: userInterfaceTestReducer,
+    enums: enumsTestReducer,
+    filters: filtersTestReducer,
+    info: infoTestReducer,
+    eventHistory: eventHistoryTestReducer,
+    notifications: notificationsTestReducer,
+    auth: authTestReducer,
+    customAttributes: customAttributesTestReducer,
+    connectors: connectorsTestReducer,
+    cryptoAssets: cryptoAssetsTestReducer,
+    secrets: secretsTestReducer,
+    vaultProfiles: vaultProfilesTestReducer,
+    tablePagination: tablePaginationTestReducer,
+    alerts: alertsTestReducer,
+    pagings: pagingsTestReducer,
+    certificates: certificatesTestReducer,
+    utilsCertificate: utilsCertificateTestReducer,
+    utilsActuator: utilsActuatorTestReducer,
+    signingRecordsDashboard: signingRecordsDashboardTestReducer,
+    cryptoAssetsDashboard: cryptoAssetsDashboardTestReducer,
+    raprofiles: raProfilesTestReducer,
+    authorities: authoritiesTestReducer,
+    cryptographicOperations: cryptographicOperationsTestReducer,
+    utilsCertificateRequest: utilsCertificateRequestTestReducer,
+    settings: settingsTestReducer,
+    tokenprofiles: tokenProfilesTestReducer,
+    tokens: tokensTestReducer,
+    cryptographicKeys: cryptographicKeysTestReducer,
+    users: usersTestReducer,
+    roles: rolesTestReducer,
+    certificateGroups: certificateGroupsTestReducer,
+    approvals: approvalsTestReducer,
+    discoveries: discoveriesTestReducer,
+    oids: oidsTestReducer,
+    rules: rulesTestReducer,
+    comments: commentsTestReducer,
+    listViews: listViewsTestReducer,
+    branding: brandingTestReducer,
+    login: loginTestReducer,
+});
+
+export const testInitialState = {
+    raProfileRequestAttributes: raProfileRequestAttributesTestInitialState,
+    userInterface: userInterfaceTestInitialState,
+    enums: enumsTestInitialState,
+    filters: filtersTestInitialState,
+    info: infoTestInitialState,
+    eventHistory: eventHistoryTestInitialState,
+    notifications: notificationsTestInitialState,
+    auth: authTestInitialState,
+    customAttributes: customAttributesTestInitialState,
+    connectors: connectorsTestInitialState,
+    cryptoAssets: cryptoAssetsTestInitialState,
+    secrets: secretsTestInitialState,
+    vaultProfiles: vaultProfilesTestInitialState,
+    tablePagination: tablePaginationTestInitialState,
+    alerts: alertsTestInitialState,
+    pagings: pagingsTestInitialState,
+    certificates: certificatesTestInitialState,
+    utilsCertificate: utilsCertificateTestInitialState,
+    utilsActuator: utilsActuatorTestInitialState,
+    signingRecordsDashboard: signingRecordsDashboardTestInitialState,
+    cryptoAssetsDashboard: cryptoAssetsDashboardTestInitialState,
+    raprofiles: raProfilesTestInitialState,
+    authorities: authoritiesTestInitialState,
+    cryptographicOperations: cryptographicOperationsTestInitialState,
+    utilsCertificateRequest: utilsCertificateRequestTestInitialState,
+    settings: settingsTestInitialState,
+    tokenprofiles: tokenProfilesTestInitialState,
+    tokens: tokensTestInitialState,
+    cryptographicKeys: cryptographicKeysTestInitialState,
+    users: usersTestInitialState,
+    roles: rolesTestInitialState,
+    certificateGroups: certificateGroupsTestInitialState,
+    approvals: approvalsTestInitialState,
+    discoveries: discoveriesTestInitialState,
+    oids: oidsTestInitialState,
+    rules: rulesTestInitialState,
+    comments: commentsTestInitialState,
+    listViews: listViewsTestInitialState,
+    branding: brandingTestInitialState,
+    login: loginTestInitialState,
+};

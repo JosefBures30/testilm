@@ -1,0 +1,17 @@
+{{- $additionalPorts := (include "x509-compliance-provider.customization.ports" $) }}
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    {{- include "x509-compliance-provider.labels" . | nindent 4 }}
+  name: x509-compliance-provider-service
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - port: {{ .Values.service.port }}
+      protocol: "TCP"
+    {{- if $additionalPorts }}
+      {{- $additionalPorts | nindent 4 }}
+    {{- end }}
+  selector:
+    {{- include "x509-compliance-provider.selectorLabels" . | nindent 4 }}

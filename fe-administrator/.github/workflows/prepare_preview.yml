@@ -1,0 +1,55 @@
+name: Prepare preview
+
+on:
+  pull_request:
+    types:
+      - labeled
+      - synchronize
+      - reopened
+      - unlabeled
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Prepare preview
+    runs-on: ubuntu-latest
+
+    # Run if:
+    # - the PR currently has label "preview" (covers synchronize/reopened)
+    # - OR the current event is labeling "preview" (covers labeled)
+    if: |
+      contains(github.event.pull_request.labels.*.name, 'preview') ||
+      (github.event.action == 'labeled' && github.event.label.name == 'preview')
+
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      # Package up PR context for downstream workflow_run
+      - name: Prepare PR context artifact
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: |
+          jq -n \
+            --arg pr_number "$PR_NUMBER" \
+            --arg head_sha "$HEAD_SHA" \
+            --arg head_repo "$HEAD_REPO" \
+            --arg head_branch "$HEAD_BRANCH" \
+            --arg base_ref "$BASE_REF" \
+            '{pr_number: $pr_number, head_sha: $head_sha, head_repo: $head_repo, head_branch: $head_branch, base_ref: $base_ref}' \
+            > pr-context.json
+          cat pr-context.json
+
+      - name: Upload PR context
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: pr-context
+          path: pr-context.json
+          retention-days: 1
+          if-no-files-found: error

@@ -1,0 +1,31 @@
+{
+    "compilerOptions": {
+        "target": "es2015",
+        "lib": ["dom", "dom.iterable", "esnext"],
+        "allowJs": true,
+        "baseUrl": ".",
+        "skipLibCheck": true,
+        "esModuleInterop": true,
+        "allowSyntheticDefaultImports": true,
+        "strict": true,
+        "forceConsistentCasingInFileNames": true,
+        "noFallthroughCasesInSwitch": true,
+        "module": "esnext",
+        "moduleResolution": "bundler",
+        "resolveJsonModule": true,
+        "isolatedModules": true,
+        "noEmit": true,
+        "jsx": "react-jsx",
+        "paths": {
+            "types/*": ["./src/types/*"],
+            "utils/*": ["./src/utils/*"],
+            "components/*": ["./src/components/*"],
+            "ducks": ["./src/ducks"],
+            "ducks/*": ["./src/ducks/*"],
+            "src/*": ["./src/*"],
+            "playwright/*": ["./playwright/*"]
+        }
+    },
+    "include": ["src", "."],
+    "files": ["src/types/global.d.ts", "src/react-app-env.d.ts"]
+}

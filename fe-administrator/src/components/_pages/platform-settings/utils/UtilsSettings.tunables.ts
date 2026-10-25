@@ -1,0 +1,79 @@
+export type CbomSyncTunableName =
+    | 'cbomSyncOverlapSeconds'
+    | 'cbomSyncSkippedRetryRuns'
+    | 'cbomSyncMaxIngestDocuments'
+    | 'cbomSyncSkipRetentionDays';
+
+export type CbomSyncTunable = Readonly<{
+    name: CbomSyncTunableName;
+    label: string;
+    unit: string;
+    unitOne: string;
+    /**
+     * What the platform uses, and reports back, while the value is unset: the schema's `default`. Transcribed from the
+     * published core spec (`components.schemas.UtilsSettingsDto`), as `max` is: the type generator emits neither
+     * defaults nor bounds into the type, so a change there has to be carried here by hand.
+     */
+    defaultValue: number;
+    /** The schema's `minimum`, refused here before the value is sent; the whole-number validator already refuses below 0. */
+    min: number;
+    /** The schema's `maximum`, refused here before the value is sent. */
+    max: number;
+    help: string;
+}>;
+
+/** The CBOM sync policy values an operator owns; one entry drives both the form field and the read row. */
+export const CBOM_SYNC_TUNABLES: readonly CbomSyncTunable[] = [
+    {
+        name: 'cbomSyncOverlapSeconds',
+        label: 'CBOM Sync Overlap',
+        unit: 'seconds',
+        unitOne: 'second',
+        defaultValue: 60,
+        min: 0,
+        max: 86_400,
+        help: 'How far before the start of the last successful sync run each run re-lists the CBOM Repository.',
+    },
+    {
+        name: 'cbomSyncSkippedRetryRuns',
+        label: 'CBOM Sync Retries',
+        unit: 'runs',
+        unitOne: 'run',
+        defaultValue: 3,
+        min: 0,
+        max: 1_000,
+        help: 'How many later sync runs retry a document that could not be stored; 0 gives it up at the first failure.',
+    },
+    {
+        name: 'cbomSyncMaxIngestDocuments',
+        label: 'CBOM Sync Catch-up',
+        unit: 'documents',
+        unitOne: 'document',
+        defaultValue: 50,
+        min: 0,
+        max: 10_000,
+        help: 'How many CBOMs a run ingests cryptographic assets from beyond the entries it has just stored; 0 turns the catch-up off.',
+    },
+    {
+        name: 'cbomSyncSkipRetentionDays',
+        label: 'CBOM Sync Skip Retention',
+        unit: 'days',
+        unitOne: 'day',
+        defaultValue: 90,
+        min: 1,
+        max: 3_650,
+        help: 'How many days a repository entry the sync gave up on stays listed before a scheduled sweep removes its record; an entry still being retried is never swept.',
+    },
+];
+
+/** The form keeps numbers as text; empty means "not set", which the platform reads as its default. */
+export const integerText = (value?: number): string => (value == null ? '' : String(value));
+
+export const parseOptionalInteger = (value?: string): number | undefined =>
+    value === undefined || value === '' ? undefined : Number.parseInt(value, 10);
+
+/** What the read view shows: the value with its unit, or the platform default while nothing is set. */
+export const describeTunable = (tunable: CbomSyncTunable, value: number | undefined): string => {
+    if (value == null) return `platform default (${tunable.defaultValue} ${tunable.unit})`;
+    return `${value} ${value === 1 ? tunable.unitOne : tunable.unit}`;
+};

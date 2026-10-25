@@ -1,0 +1,34 @@
+name: Publish Docker image
+
+on:
+  push:
+    branches: [ main ]
+    tags:
+      - '*'
+  workflow_dispatch:
+
+concurrency:
+  group: publish-${{ github.ref }}-harbor
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+
+jobs:
+  publish:
+    # Tracks @main by design: this is a first-party OmniTrustILM reusable workflow and
+    # edits to it are meant to reach every repo without a bump here. Sonar's "use a full
+    # commit SHA" rule targets third-party actions and is accepted for this reference.
+    uses: OmniTrustILM/.github/.github/workflows/containers-build-and-push.yml@main
+    secrets:
+      CONTAINER_REGISTRY_USERNAME: ${{ secrets.CONTAINER_REGISTRY_USERNAME }}
+      CONTAINER_REGISTRY_PASSWORD: ${{ secrets.CONTAINER_REGISTRY_PASSWORD }}
+      COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
+      COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
+    with:
+      image: ilm/frontend-administrator
+      cache-scope: frontend-administrator
+      build-args: |
+        VERSION=${{ github.ref_name }}

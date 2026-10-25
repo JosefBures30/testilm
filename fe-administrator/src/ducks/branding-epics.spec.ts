@@ -1,0 +1,338 @@
+import { afterEach, describe, expect, test, vi } from 'vitest';
+import { firstValueFrom, lastValueFrom, type Observable, of, Subject, throwError } from 'rxjs';
+import { AjaxError } from 'rxjs/ajax';
+import { delay, take, toArray } from 'rxjs/operators';
+import type { UnknownAction } from 'redux';
+import type { PublicBrandingModel } from 'types/branding';
+import { actions as alertActions } from './alerts';
+import { actions as appRedirectActions } from './app-redirect';
+import * as brandingUtils from 'utils/branding';
+import { platformDefaultBranding, slice, toPublicBranding } from './branding';
+import epics from './branding-epics';
+
+/** The anonymous response is a fixed shape, so a fixture overrides the platform default rather than listing fields. */
+const publicBranding = (overrides: Partial<PublicBrandingModel>): PublicBrandingModel => ({
+    ...platformDefaultBranding,
+    ...overrides,
+});
+
+/** Same shape `app-redirect.spec.ts` uses: an `AjaxError` cannot be constructed without a real XHR. */
+const ajaxError = (status: number, message: string): AjaxError => {
+    const err = Object.assign(new Error(message), { name: 'AjaxError', status });
+    Object.setPrototypeOf(err, AjaxError.prototype);
+    return err as unknown as AjaxError;
+};
+
+type BrandingApiStubs = {
+    getBrandingSettings: () => unknown;
+    updateBrandingSettings: (args: { brandingSettingsUpdateDto: unknown }) => unknown;
+    getBranding: () => unknown;
+};
+
+function createDeps(overrides: Partial<BrandingApiStubs> = {}) {
+    const stubs: BrandingApiStubs = {
+        getBrandingSettings: () => of({}),
+        updateBrandingSettings: () => of(undefined),
+        getBranding: () => of(platformDefaultBranding),
+        ...overrides,
+    };
+
+    return {
+        apiClients: {
+            settings: {
+                getBrandingSettings: stubs.getBrandingSettings,
+                updateBrandingSettings: stubs.updateBrandingSettings,
+            },
+            branding: { getBranding: stubs.getBranding },
+        },
+    };
+}
+
+/** Saves and resets share the write epic, so both indexes point at the same pipeline. */
+const [GET_BRANDING, GET_PUBLIC_BRANDING, WRITE_BRANDING] = [0, 1, 2];
+
+/** Epics are invoked directly with stub deps rather than through the store, as the sibling epic specs do. */
+type EpicUnderTest = (action$: unknown, state$: unknown, deps: unknown) => Observable<{ type: string; payload?: never }>;
+
+async function run(epic: EpicUnderTest, action: unknown, deps: unknown, expected: number) {
+    const output$ = epic(of(action), of({}), deps);
+    return firstValueFrom(output$.pipe(take(expected), toArray()));
+}
+
+/** Collects the whole emission, so a test asserting a failure path also asserts that nothing follows it. */
+async function runAll(epic: EpicUnderTest, action: unknown, deps: unknown) {
+    return lastValueFrom(epic(of(action), of({}), deps).pipe(toArray()));
+}
+
+describe('branding epics', () => {
+    afterEach(() => {
+        vi.restoreAllMocks();
+    });
+
+    test('getBranding emits the branding it read', async () => {
+        const branding = { primaryColor: '#0073CF' };
+        const deps = createDeps({ getBrandingSettings: () => of(branding) });
+
+        const emitted = await run(epics[GET_BRANDING], slice.actions.getBranding(), deps, 1);
+
+        expect(emitted).toEqual([slice.actions.getBrandingSuccess({ branding })]);
+    });
+
+    test('getBranding failure reports the error and redirects', async () => {
+        const err = new Error('boom');
+        const deps = createDeps({ getBrandingSettings: () => throwError(() => err) });
+
+        const emitted = await runAll(epics[GET_BRANDING], slice.actions.getBranding(), deps);
+
+        expect(emitted).toEqual([
+            slice.actions.getBrandingFailure({ error: 'Failed to get branding. boom' }),
+            appRedirectActions.fetchError({ error: err, message: 'Failed to get branding' }),
+        ]);
+    });
+
+    /**
+     * A Core without the branding endpoints is not an error the operator can act on, and neither is an instance that
+     * has never been branded. Both mean "unbranded", so the settings page loads empty rather than showing a failure.
+     */
+    test('getBranding treats a missing endpoint as unbranded rather than an error', async () => {
+        const deps = createDeps({ getBrandingSettings: () => throwError(() => ajaxError(404, 'Not Found')) });
+
+        const emitted = await runAll(epics[GET_BRANDING], slice.actions.getBranding(), deps);
+
+        expect(emitted).toEqual([slice.actions.getBrandingSuccess({ branding: {} })]);
+    });
+
+    test('getPublicBranding emits what an anonymous caller received', async () => {
+        const branding = publicBranding({ configured: true, primaryColor: '#0073CF' });
+        const deps = createDeps({ getBranding: () => of(branding) });
+
+        const emitted = await run(epics[GET_PUBLIC_BRANDING], slice.actions.getPublicBranding(), deps, 1);
+
+        expect(emitted).toEqual([slice.actions.getPublicBrandingSuccess({ branding })]);
+    });
+
+    test('getPublicBranding failure reports the error without redirecting', async () => {
+        const deps = createDeps({ getBranding: () => throwError(() => new Error('offline')) });
+
+        const emitted = await runAll(epics[GET_PUBLIC_BRANDING], slice.actions.getPublicBranding(), deps);
+
+        expect(emitted).toEqual([slice.actions.getPublicBrandingFailure({ error: 'Failed to get branding. offline' })]);
+        expect(emitted.map((action: { type: string }) => action.type)).not.toContain(appRedirectActions.fetchError.type);
+    });
+
+    /** The login page is the one place a 404 is expected in normal operation, and it must render the default silently. */
+    test('getPublicBranding treats a missing endpoint as the platform default', async () => {
+        const deps = createDeps({ getBranding: () => throwError(() => ajaxError(404, 'Not Found')) });
+
+        const emitted = await runAll(epics[GET_PUBLIC_BRANDING], slice.actions.getPublicBranding(), deps);
+
+        expect(emitted).toEqual([slice.actions.getPublicBrandingSuccess({ branding: platformDefaultBranding })]);
+        expect(platformDefaultBranding.configured).toBe(false);
+    });
+
+    /** Core rewrites SVG logos on the way in, so the epic has to report the stored branding, not the one it sent. */
+    test('updateBranding sends the branding and confirms with what Core stored', async () => {
+        const branding = { lightLogo: 'data:image/svg+xml;base64,PHN2ZyBvbmxvYWQ9ImFsZXJ0KDEpIi8+' };
+        const stored = { lightLogo: 'data:image/svg+xml;base64,PHN2Zy8+' };
+        const sent: unknown[] = [];
+        const deps = createDeps({
+            updateBrandingSettings: ({ brandingSettingsUpdateDto }) => {
+                sent.push(brandingSettingsUpdateDto);
+                return of(undefined);
+            },
+            getBrandingSettings: () => of(stored),
+        });
+
+        const emitted = await run(epics[WRITE_BRANDING], slice.actions.updateBranding({ branding }), deps, 3);
+
+        expect(sent).toEqual([branding]);
+        expect(emitted[0]).toEqual(slice.actions.updateBrandingSuccess({ branding: stored }));
+        expect(emitted[1]).toEqual(slice.actions.getPublicBrandingSuccess({ branding: toPublicBranding(stored) }));
+        expect(emitted[2].type).toBe(alertActions.success.type);
+    });
+
+    /**
+     * The token layer and the theme both resolve from the anonymous response, so a committed save that does not
+     * refresh it leaves the page it was made on rendering the previous palette until the next full reload. It is set
+     * from the read-back rather than re-read, because Core serves the anonymous response with a 60-second public
+     * cache and a read issued here is answered from it with the pre-write brand.
+     */
+    test('updateBranding settles the anonymous view without re-reading the cached endpoint', async () => {
+        let anonymousReads = 0;
+        const deps = createDeps({
+            getBranding: () => {
+                anonymousReads += 1;
+                return of(platformDefaultBranding);
+            },
+        });
+
+        const emitted = await run(epics[WRITE_BRANDING], slice.actions.updateBranding({ branding: {} }), deps, 3);
+
+        expect(emitted.map((action: { type: string }) => action.type)).toContain(slice.actions.getPublicBrandingSuccess.type);
+        expect(anonymousReads).toBe(0);
+    });
+
+    test('updateBranding failure reports the error and redirects', async () => {
+        const err = new Error('rejected');
+        const deps = createDeps({ updateBrandingSettings: () => throwError(() => err) });
+
+        const emitted = await runAll(epics[WRITE_BRANDING], slice.actions.updateBranding({ branding: {} }), deps);
+
+        expect(emitted).toEqual([
+            slice.actions.updateBrandingFailure({ error: 'Failed to update branding. rejected' }),
+            appRedirectActions.fetchError({ error: err, message: 'Failed to update branding' }),
+        ]);
+    });
+
+    /** A write is not a read: saving branding to a Core that cannot store it is a real failure, 404 or not. */
+    test('updateBranding reports a missing endpoint as a failure', async () => {
+        const err = ajaxError(404, 'Not Found');
+        const deps = createDeps({ updateBrandingSettings: () => throwError(() => err) });
+
+        const emitted = await runAll(epics[WRITE_BRANDING], slice.actions.updateBranding({ branding: {} }), deps);
+
+        expect(emitted).toEqual([
+            slice.actions.updateBrandingFailure({ error: 'Failed to update branding (404): Not Found' }),
+            appRedirectActions.fetchError({ error: err, message: 'Failed to update branding' }),
+        ]);
+    });
+
+    /**
+     * The write landed and only the read-back failed, so the save must not be reported as the thing that went wrong.
+     * What is actually wrong is the slice, which still holds the pre-write branding, so a read repairs it.
+     */
+    test('updateBranding reports a failed read-back apart from a failed save', async () => {
+        const err = new Error('unreadable');
+        const deps = createDeps({ getBrandingSettings: () => throwError(() => err) });
+
+        const emitted = await runAll(epics[WRITE_BRANDING], slice.actions.updateBranding({ branding: {} }), deps);
+
+        expect(emitted).toEqual([
+            slice.actions.updateBrandingFailure({ error: 'Branding was saved but could not be read back. unreadable' }),
+            appRedirectActions.fetchError({ error: err, message: 'Branding was saved but could not be read back' }),
+            slice.actions.getBranding(),
+            slice.actions.getPublicBranding(),
+        ]);
+    });
+
+    /**
+     * The brand changed on the server even though the read-back failed, so the applied palette is stale too. Without
+     * the mark the reload that follows is answered from the browser's cache with the brand that was just replaced.
+     */
+    test('updateBranding marks the cache window even when the read-back fails', async () => {
+        const marked: number[] = [];
+        vi.spyOn(brandingUtils, 'markBrandingChanged').mockImplementation(() => void marked.push(1));
+        const deps = createDeps({ getBrandingSettings: () => throwError(() => new Error('unreadable')) });
+
+        await runAll(epics[WRITE_BRANDING], slice.actions.updateBranding({ branding: {} }), deps);
+
+        expect(marked).toHaveLength(1);
+    });
+
+    /** Reset is one empty update rather than a field-by-field clear, so the body sent has to actually be empty. */
+    test('resetBranding sends an empty update', async () => {
+        const sent: unknown[] = [];
+        const deps = createDeps({
+            updateBrandingSettings: ({ brandingSettingsUpdateDto }) => {
+                sent.push(brandingSettingsUpdateDto);
+                return of(undefined);
+            },
+        });
+
+        const emitted = await run(epics[WRITE_BRANDING], slice.actions.resetBranding(), deps, 3);
+
+        expect(sent).toEqual([{}]);
+        expect(emitted[0]).toEqual(slice.actions.resetBrandingSuccess());
+        expect(emitted[1]).toEqual(slice.actions.getPublicBrandingSuccess({ branding: platformDefaultBranding }));
+        expect(emitted[2].type).toBe(alertActions.success.type);
+    });
+
+    /**
+     * Unbranding has to take effect on the page it was requested from, and re-reading the anonymous endpoint would
+     * defeat that: its response is publicly cacheable for a minute, so the browser answers with the brand that was
+     * just cleared and the token layer paints it straight back.
+     */
+    test('resetBranding restores the platform palette without re-reading the cached endpoint', async () => {
+        let anonymousReads = 0;
+        const deps = createDeps({
+            getBranding: () => {
+                anonymousReads += 1;
+                return of(platformDefaultBranding);
+            },
+        });
+
+        const emitted = await run(epics[WRITE_BRANDING], slice.actions.resetBranding(), deps, 3);
+
+        expect(emitted).toContainEqual(slice.actions.getPublicBrandingSuccess({ branding: platformDefaultBranding }));
+        expect(anonymousReads).toBe(0);
+    });
+
+    /** Without this the reset call could be deleted and every test would stay green, which is the defect it prevents. */
+    test('resetBranding marks the cache window on success and not on failure', async () => {
+        const marked: number[] = [];
+        vi.spyOn(brandingUtils, 'markBrandingChanged').mockImplementation(() => void marked.push(1));
+
+        await run(epics[WRITE_BRANDING], slice.actions.resetBranding(), createDeps(), 3);
+        expect(marked).toHaveLength(1);
+
+        const rejecting = createDeps({ updateBrandingSettings: () => throwError(() => new Error('denied')) });
+        await runAll(epics[WRITE_BRANDING], slice.actions.resetBranding(), rejecting);
+        expect(marked).toHaveLength(1);
+    });
+
+    /**
+     * A read that started before the write must not settle after it. `getPublicBrandingSuccess` is dispatched by the
+     * write rather than routed through the read epic's `switchMap`, so the read epic cancels itself on one instead.
+     */
+    test('should drop an anonymous read that a newer authoritative result has superseded', async () => {
+        const inFlight = new Subject<PublicBrandingModel>();
+        const deps = createDeps({ getBranding: () => inFlight });
+        const action$ = new Subject<UnknownAction>();
+        const emitted: UnknownAction[] = [];
+        const subscription = (epics[GET_PUBLIC_BRANDING] as EpicUnderTest)(action$, of({}), deps).subscribe((a) => emitted.push(a));
+
+        action$.next(slice.actions.getPublicBranding());
+        action$.next(slice.actions.getPublicBrandingSuccess({ branding: platformDefaultBranding }));
+        inFlight.next({ ...platformDefaultBranding, configured: true, primaryColor: '#0073CF' });
+        inFlight.complete();
+
+        expect(emitted).toEqual([]);
+        subscription.unsubscribe();
+    });
+
+    test('resetBranding failure reports the error and redirects', async () => {
+        const err = new Error('denied');
+        const deps = createDeps({ updateBrandingSettings: () => throwError(() => err) });
+
+        const emitted = await runAll(epics[WRITE_BRANDING], slice.actions.resetBranding(), deps);
+
+        expect(emitted).toEqual([
+            slice.actions.resetBrandingFailure({ error: 'Failed to reset branding. denied' }),
+            appRedirectActions.fetchError({ error: err, message: 'Failed to reset branding' }),
+        ]);
+    });
+
+    /** The point of the shared write epic: a save and a reset dispatched together settle in the order they were sent. */
+    test('a save and a reset settle in dispatch order even when the save is slower', async () => {
+        const deps = createDeps({
+            updateBrandingSettings: ({ brandingSettingsUpdateDto }) =>
+                Object.keys(brandingSettingsUpdateDto as object).length === 0 ? of(undefined) : of(undefined).pipe(delay(10)),
+        });
+
+        const output$ = (epics[WRITE_BRANDING] as EpicUnderTest)(
+            of(slice.actions.updateBranding({ branding: { primaryColor: '#00A3E0' } }), slice.actions.resetBranding()),
+            of({}),
+            deps,
+        );
+        const emitted = await firstValueFrom(output$.pipe(take(6), toArray()));
+
+        expect(emitted.map((action: { type: string }) => action.type)).toEqual([
+            slice.actions.updateBrandingSuccess.type,
+            slice.actions.getPublicBrandingSuccess.type,
+            alertActions.success.type,
+            slice.actions.resetBrandingSuccess.type,
+            slice.actions.getPublicBrandingSuccess.type,
+            alertActions.success.type,
+        ]);
+    });
+});

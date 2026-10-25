@@ -1,0 +1,27 @@
+### Secrets and credentials ###
+.env
+.env.*
+*.key
+*.pem
+*.p12
+*.jks
+*.pfx
+credentials.*
+secrets.*
+
+### IntelliJ IDEA ###
+.idea
+*.iws
+*.iml
+*.ipr
+
+### VS Code ###
+.vscode/
+
+### Claude Code ###
+.claude/
+docs/superpowers/
+
+### OS ###
+.DS_Store
+Thumbs.db

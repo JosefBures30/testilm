@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: global-configmap
+data:
+  kong.yml: |-
+    {{- include "api-gateway-kong.config.yml" (dict "global" .Values.global "apiGateway" .Values.apiGateway) | indent 4 }}

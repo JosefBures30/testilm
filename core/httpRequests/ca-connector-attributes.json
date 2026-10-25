@@ -1,0 +1,13 @@
+[
+  {
+    "name": "url",
+    "value": "https://localhost/ejbca/ejbcaws/ejbcaws?wsdl"
+  },
+  {
+    "name": "credential",
+    "value": {
+      "name": "testName",
+      "uuid": "testUuid"
+    }
+  }
+]

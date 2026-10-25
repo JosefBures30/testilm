@@ -1,0 +1,923 @@
+import { act } from 'react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createRoot, type Root } from 'react-dom/client';
+
+import DiscoveryDetail from './index';
+import { DiscoveryStatus, PlatformEnum, Resource, ResourceAction } from 'types/openapi';
+import { LockWidgetNameEnum } from 'types/user-interface';
+import { setupReactActEnvironment } from '../../test-utils/reactActEnvironment';
+import { useDispatchMock, useSelectorMock } from '../../test-utils/reactReduxMockModule';
+
+setupReactActEnvironment();
+
+vi.mock('react-redux', async () => await import('../../test-utils/reactReduxMockModule'));
+
+vi.mock('react-router', () => ({
+    useParams: () => ({ id: 'disc-1' }),
+    useNavigate: () => vi.fn(),
+    useLocation: () => ({ pathname: '/discoveries/detail/disc-1' }),
+    useSearchParams: () => [new URLSearchParams(), () => undefined],
+    Link: ({ children }: any) => <span>{children}</span>,
+}));
+
+vi.mock('components/Container', async () => {
+    const { containerMockModule } = await import('../../test-utils/mockModules');
+    return containerMockModule();
+});
+
+vi.mock('components/Widget', async () => {
+    const { widgetMockModule } = await import('../../test-utils/mockModules');
+    return widgetMockModule();
+});
+
+vi.mock('components/CustomTable', async () => {
+    const { customTableMockModule } = await import('../../test-utils/mockModules');
+    return customTableMockModule();
+});
+
+vi.mock('components/Dialog', async () => {
+    const { dialogMockModule } = await import('../../test-utils/mockModules');
+    return dialogMockModule();
+});
+
+// Every tab's content is rendered so the Details, Results and Run Messages tabs can all be asserted in one mount.
+vi.mock('components/Layout/TabLayout', () => ({
+    default: ({ tabs }: any) => (
+        <div>
+            {tabs.map((t: any, i: number) => (
+                <section key={t.tabKey ?? (typeof t.title === 'string' ? t.title : i)} data-testid={`tab-${t.tabKey ?? t.title}`}>
+                    <h2>{t.title}</h2>
+                    {t.content}
+                </section>
+            ))}
+        </div>
+    ),
+}));
+
+vi.mock('components/Breadcrumb', () => ({ default: ({ items }: any) => <div>{items?.[1]?.label}</div> }));
+vi.mock('components/Label', () => ({ default: ({ children }: any) => <div>{children}</div> }));
+vi.mock('components/DetailPageSkeleton', () => ({ default: () => <div data-testid="skeleton">skeleton</div> }));
+vi.mock('components/Attributes/AttributeViewer', () => ({
+    default: () => <div data-testid="attributes">attributes</div>,
+    ATTRIBUTE_VIEWER_TYPE: { METADATA: 'metadata' },
+}));
+vi.mock('components/Attributes/CustomAttributeWidget', () => ({ default: () => <div data-testid="custom-attributes" /> }));
+vi.mock('components/EnumDescription', () => ({ EnumColumnDescription: () => <span /> }));
+vi.mock('components/ConnectorLink', () => ({ default: ({ name }: any) => <span>{name}</span> }));
+vi.mock('components/_pages/notifications/events-settings/ObjectEventHistoryWidget', () => ({ default: () => <div /> }));
+vi.mock('components/CommentPanel', () => ({ default: () => <div /> }));
+vi.mock('./DiscoveryCertificates', () => ({ default: () => <div data-testid="discovery-certificates">certificates view</div> }));
+vi.mock('./DiscoveryItemsTable', () => ({
+    default: ({ resource }: any) => <div data-testid={`discovery-items-${resource}`}>items view</div>,
+}));
+vi.mock('./DiscoveryRunMessages', () => ({ default: () => <div data-testid="run-messages">run messages</div> }));
+vi.mock('utils/widget', () => ({ createWidgetDetailHeaders: () => [] }));
+
+const v1Run = {
+    uuid: 'disc-1',
+    name: 'nightly-scan',
+    kind: 'IP-HostName',
+    status: DiscoveryStatus.Completed,
+    connectorStatus: DiscoveryStatus.Completed,
+    connectorUuid: 'conn-1',
+    connectorName: 'network-discovery',
+    totalCertificatesDiscovered: 4,
+    connectorTotalCertificatesDiscovered: 4,
+    attributes: [],
+    customAttributes: [],
+    triggers: [],
+    resources: [Resource.Certificates],
+    runMessageCount: 0,
+    stoppable: false,
+    itemsNewlyDiscovered: 0,
+    itemsProcessed: 0,
+    itemsFailed: 0,
+};
+
+const v2Run = {
+    ...v1Run,
+    status: DiscoveryStatus.InProgress,
+    connectorStatus: DiscoveryStatus.InProgress,
+    connectorInterface: { uuid: 'iface-1', code: 'discovery', version: 'v2' },
+    resources: [Resource.Certificates, Resource.Keys],
+    runMessageCount: 3,
+    stoppable: true,
+    itemsDiscovered: 52,
+    itemsNewlyDiscovered: 7,
+    itemsProcessed: 5,
+    itemsFailed: 1,
+    totalCertificatesDiscovered: 48,
+    connectorTotalCertificatesDiscovered: 48,
+    progress: {
+        targetsProcessed: 12,
+        targetsTotal: 30,
+        targetsFailed: 3,
+        phase: 'scanning',
+        byResource: { certificates: { produced: 48, totalEstimate: 120, phase: 'collecting' }, keys: { produced: 4 } },
+        updatedAt: '2026-09-13T12:32:07.000Z',
+    },
+};
+
+const allDiscoveryActions = [ResourceAction.Stop, ResourceAction.Resume, ResourceAction.Cancel, ResourceAction.Delete];
+
+function buildState(discovery: any, allowedActions: ResourceAction[] = allDiscoveryActions, messages?: any) {
+    return {
+        discoveries: {
+            discovery,
+            discoveryMessages: messages,
+            isFetchingDetail: false,
+            isDeleting: false,
+            isStopping: false,
+            isResuming: false,
+            isCancelling: false,
+        },
+        auth: {
+            profile: {
+                permissions: { allowedListings: [], allowedActions: [{ resource: Resource.Discoveries, actions: allowedActions }] },
+            },
+        },
+        rules: {
+            triggerHistorySummary: undefined,
+            isFetchingTriggerHistorySummary: false,
+            isFetchingTriggerHistories: false,
+        },
+        enums: {
+            platformEnums: {
+                [PlatformEnum.Resource]: {
+                    [Resource.Discoveries]: { label: 'Discoveries' },
+                    [Resource.Certificates]: { label: 'Certificate' },
+                    [Resource.Keys]: { label: 'Key' },
+                },
+                [PlatformEnum.TriggerType]: {},
+                [PlatformEnum.ResourceEvent]: {},
+            },
+        },
+    };
+}
+
+describe('DiscoveryDetail', () => {
+    let container: HTMLDivElement;
+    let root: Root;
+    const dispatch = vi.fn();
+
+    beforeEach(() => {
+        container = document.createElement('div');
+        document.body.appendChild(container);
+        root = createRoot(container);
+        dispatch.mockReset();
+        useDispatchMock.mockReturnValue(dispatch);
+    });
+
+    afterEach(async () => {
+        await act(async () => root.unmount());
+        container.remove();
+        vi.clearAllMocks();
+    });
+
+    async function render(state: any) {
+        useSelectorMock.mockImplementation((selector: any) => selector(state));
+        await act(async () => {
+            root.render(<DiscoveryDetail />);
+        });
+    }
+
+    const headerButtons = () =>
+        Array.from(container.querySelectorAll<HTMLButtonElement>('[data-testid="widget-Discovery Details"] > button')).map((b) => b.title);
+
+    const rowText = (id: string) => container.querySelector(`[data-testid="row-${id}"]`)?.textContent;
+
+    describe('a run against a v1 Discovery Provider renders as before', () => {
+        it('carries exactly the delete button, no interface row, no progress widget', async () => {
+            await render(buildState(v1Run));
+
+            expect(headerButtons()).toEqual(['Delete']);
+            expect(rowText('kind')).toBe('KindIP-HostName');
+            expect(container.querySelector('[data-testid="row-connectorInterface"]')).toBeNull();
+            expect(container.querySelector('[data-testid="widget-Progress"]')).toBeNull();
+            expect(container.querySelector('[data-testid="discovery-certificates"]')).not.toBeNull();
+            expect(container.querySelector('[data-testid^="discovery-items-"]')).toBeNull();
+        });
+
+        it('reports zero on every import count rather than an empty bar, and a dash where a v1 run has no figure', async () => {
+            await render(buildState(v1Run));
+
+            expect(rowText('itemsDiscovered')).toContain('—');
+            expect(rowText('itemsNewlyDiscovered')).toBe('New to the inventory0');
+            expect(rowText('itemsProcessed')).toBe('Imported0');
+            expect(rowText('itemsFailed')).toBe('Not imported0');
+            expect(rowText('totalCertificatesDiscovered')).toBe('Distinct certificates saved4');
+            expect(rowText('connectorTotalCertificatesDiscovered')).toContain('4');
+            expect(container.querySelector('[data-testid^="certificate-note-"]')).toBeNull();
+        });
+
+        it('no longer shows the two mislabelled certificate rows on the details table', async () => {
+            await render(buildState(v1Run));
+
+            expect(container.querySelector('[data-testid="row-totalCertificatesDownloaded"]')).toBeNull();
+            expect(container.textContent).not.toContain('Total Certificates Downloaded');
+        });
+    });
+
+    describe('resources', () => {
+        it('says which resources the run targeted', async () => {
+            await render(buildState(v2Run));
+
+            expect(rowText('resources')).toBe('ResourcesCertificateKey');
+        });
+
+        it('names certificates for a v1 run, which can target nothing else', async () => {
+            // Core synthesizes the list for a v1 run, so the row is never blank and never says "unknown".
+            await render(buildState(v1Run));
+
+            expect(rowText('resources')).toBe('ResourcesCertificate');
+        });
+    });
+
+    describe('lifecycle controls: stoppable × status × permission', () => {
+        it('offers stop and cancel while a stoppable run is in progress', async () => {
+            await render(buildState(v2Run));
+
+            expect(headerButtons()).toEqual(['Stop', 'Cancel', 'Delete (cancel the run first)']);
+        });
+
+        it('offers resume and cancel while stopped', async () => {
+            await render(buildState({ ...v2Run, status: DiscoveryStatus.Stopped }));
+
+            expect(headerButtons()).toEqual(['Resume', 'Cancel', 'Delete (cancel the run first)']);
+        });
+
+        it('offers nothing once the platform is processing', async () => {
+            await render(buildState({ ...v2Run, status: DiscoveryStatus.Processing }));
+
+            expect(headerButtons()).toEqual(['Delete (wait for the run to end)']);
+        });
+
+        it('disables delete while a v2 run is live, since Core refuses to delete a run that has not ended', async () => {
+            const deleteButton = () =>
+                container.querySelector<HTMLButtonElement>('[data-testid="widget-Discovery Details"] > button[title^="Delete"]');
+
+            await render(buildState(v2Run));
+            expect(deleteButton()?.disabled).toBe(true);
+            expect(deleteButton()?.title).toBe('Delete (cancel the run first)');
+
+            // Cancel is refused once Core is processing the run, so sending the user there would be a dead end.
+            await render(buildState({ ...v2Run, status: DiscoveryStatus.Processing }));
+            expect(deleteButton()?.disabled).toBe(true);
+            expect(deleteButton()?.title).toBe('Delete (wait for the run to end)');
+
+            await render(buildState({ ...v2Run, status: DiscoveryStatus.Completed }));
+            expect(deleteButton()?.disabled).toBe(false);
+            expect(deleteButton()?.title).toBe('Delete');
+        });
+
+        it('refreshes the page in place from Discovery Details, keeping the run that is on screen', async () => {
+            await render(buildState(v2Run));
+            dispatch.mockClear();
+
+            await act(async () => {
+                container.querySelector<HTMLButtonElement>('[data-testid="refresh-Discovery Details"]')?.click();
+            });
+
+            const actions = dispatch.mock.calls.map((call) => call[0]);
+            // resetState would blank the page and show the full skeleton, which is what the lifecycle refresh
+            // deliberately avoids.
+            expect(actions.map((action) => action?.type)).not.toContain('discoveries/resetState');
+            expect(actions.find((action) => action?.type === 'discoveries/getDiscoveryDetail')?.payload).toEqual({
+                uuid: 'disc-1',
+                keepCurrent: true,
+            });
+        });
+
+        it('hides a control the user lacks permission for rather than disabling it', async () => {
+            await render(buildState(v2Run, [ResourceAction.Cancel]));
+
+            expect(headerButtons()).toEqual(['Cancel', 'Delete (cancel the run first)']);
+        });
+
+        it('disables delete while a lifecycle call is in flight, so two mutations never race', async () => {
+            const state = buildState(v2Run);
+            state.discoveries.isStopping = true;
+            await render(state);
+
+            const buttons = Array.from(container.querySelectorAll<HTMLButtonElement>('[data-testid="widget-Discovery Details"] > button'));
+            expect(buttons.map((b) => [b.title, b.disabled])).toEqual([
+                ['Stop', true],
+                ['Cancel', true],
+                ['Delete (cancel the run first)', true],
+            ]);
+        });
+
+        it('stops immediately, but confirms a cancel in words that say what is lost', async () => {
+            await render(buildState(v2Run));
+
+            await act(async () => {
+                container.querySelector<HTMLButtonElement>('[data-testid="widget-Discovery Details"] > button[title="Stop"]')?.click();
+            });
+            expect(dispatch).toHaveBeenCalledWith(
+                expect.objectContaining({ type: 'discoveries/stopDiscovery', payload: { uuid: 'disc-1' } }),
+            );
+
+            await act(async () => {
+                container.querySelector<HTMLButtonElement>('[data-testid="widget-Discovery Details"] > button[title="Cancel"]')?.click();
+            });
+            const dialog = container.querySelector('[data-testid="dialog"]');
+            expect(dialog?.textContent).toContain('never imported');
+            expect(dispatch).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'discoveries/cancelDiscovery' }));
+
+            await act(async () => {
+                Array.from(dialog?.querySelectorAll('button') ?? [])
+                    .find((b) => b.textContent === 'Cancel discovery')
+                    ?.click();
+            });
+            expect(dispatch).toHaveBeenCalledWith(
+                expect.objectContaining({ type: 'discoveries/cancelDiscovery', payload: { uuid: 'disc-1' } }),
+            );
+        });
+    });
+
+    describe('progress', () => {
+        it('draws a determinate Provider bar with its caption, phase and failures', async () => {
+            await render(buildState(v2Run));
+
+            const bar = container.querySelector('[data-testid="provider-progress-bar"] [role="progressbar"]');
+            expect(bar?.getAttribute('aria-valuenow')).toBe('12');
+            expect(bar?.getAttribute('aria-valuemax')).toBe('30');
+            expect(bar?.getAttribute('aria-label')).toBe('Discovery Provider: 12 / 30 targets');
+            expect(container.querySelector('[data-testid="targets-caption"]')?.textContent).toBe('12 / 30 targets');
+            expect(container.querySelector('[data-testid="progress-phase"]')?.textContent).toBe('Phase: scanning');
+            expect(container.querySelector('[data-testid="progress-recorded"]')?.textContent).toMatch(/^as of \d{4}-/);
+            expect(container.querySelector('[data-testid="targets-failed"]')?.textContent).toBe('3 targets failed');
+        });
+
+        it('renders an indeterminate bar when the Provider sent no total, never a computed percentage', async () => {
+            const progress = { ...v2Run.progress, targetsTotal: undefined };
+            await render(buildState({ ...v2Run, progress }));
+
+            const bar = container.querySelector('[data-testid="provider-progress-bar"] [role="progressbar"]');
+            expect(bar?.getAttribute('data-indeterminate')).toBe('true');
+            expect(bar?.hasAttribute('aria-valuenow')).toBe(false);
+            expect(container.querySelector('[data-testid="targets-caption"]')?.textContent).toBe('12 targets');
+        });
+
+        it('adds the platform import bar only while processing, counted in items', async () => {
+            await render(buildState(v2Run));
+            expect(container.querySelector('[data-testid="import-progress"]')).toBeNull();
+
+            await render(buildState({ ...v2Run, status: DiscoveryStatus.Processing }));
+            const bar = container.querySelector('[data-testid="import-progress-bar"] [role="progressbar"]');
+            expect(bar?.getAttribute('aria-valuenow')).toBe('5');
+            expect(bar?.getAttribute('aria-valuemax')).toBe('7');
+            expect(container.querySelector('[data-testid="import-progress"]')?.textContent).toContain('1 waiting, 1 not imported');
+            expect(container.querySelector('[data-testid="import-progress"]')?.textContent).not.toContain('counted on every read');
+        });
+
+        it('says one target failed without a plural', async () => {
+            await render(buildState({ ...v2Run, progress: { ...v2Run.progress, targetsFailed: 1 } }));
+
+            expect(container.querySelector('[data-testid="targets-failed"]')?.textContent).toBe('1 target failed');
+        });
+
+        it('keeps the amber line for failures and gives empty targets a muted line of their own', async () => {
+            await render(
+                buildState({ ...v2Run, progress: { ...v2Run.progress, targetsProcessed: 768, targetsTotal: 768, targetsEmpty: 717 } }),
+            );
+
+            const empty = container.querySelector('[data-testid="targets-empty"]');
+            const failed = container.querySelector('[data-testid="targets-failed"]');
+            expect(empty?.textContent).toBe('717 targets had nothing to discover');
+            expect(empty?.className).toContain('text-content-muted');
+            expect(empty?.className).not.toContain('text-warning');
+            expect(failed?.textContent).toBe('3 targets failed');
+            expect(failed?.className).toContain('text-warning');
+        });
+
+        it('says one target had nothing to discover without a plural', async () => {
+            await render(buildState({ ...v2Run, progress: { ...v2Run.progress, targetsEmpty: 1 } }));
+
+            expect(container.querySelector('[data-testid="targets-empty"]')?.textContent).toBe('1 target had nothing to discover');
+        });
+
+        it('shows neither line when no target came up empty or failed', async () => {
+            for (const outcomes of [
+                { targetsEmpty: 0, targetsFailed: 0 },
+                { targetsEmpty: undefined, targetsFailed: undefined },
+            ]) {
+                await render(buildState({ ...v2Run, progress: { ...v2Run.progress, ...outcomes } }));
+
+                expect(container.querySelector('[data-testid="targets-empty"]')).toBeNull();
+                expect(container.querySelector('[data-testid="targets-failed"]')).toBeNull();
+            }
+        });
+
+        it('draws the bar full once the Provider is done, though it never sent a total', async () => {
+            for (const status of [DiscoveryStatus.Processing, DiscoveryStatus.Completed, DiscoveryStatus.Cancelled]) {
+                await render(buildState({ ...v2Run, status, progress: { ...v2Run.progress, targetsTotal: undefined } }));
+
+                const bar = container.querySelector('[data-testid="provider-progress-bar"] [role="progressbar"]');
+                expect(bar?.hasAttribute('data-indeterminate')).toBe(false);
+                expect(bar?.getAttribute('aria-valuenow')).toBe(bar?.getAttribute('aria-valuemax'));
+                expect(container.querySelector('[data-testid="targets-caption"]')?.textContent).toBe('12 targets');
+            }
+        });
+
+        it('stops moving once the Provider reports completion, while Core still drains its last items', async () => {
+            await render(
+                buildState({
+                    ...v2Run,
+                    connectorStatus: DiscoveryStatus.Completed,
+                    progress: { ...v2Run.progress, targetsTotal: undefined },
+                }),
+            );
+
+            const bar = container.querySelector('[data-testid="provider-progress-bar"] [role="progressbar"]');
+            expect(bar?.hasAttribute('data-indeterminate')).toBe(false);
+            expect(bar?.getAttribute('aria-valuenow')).toBe(bar?.getAttribute('aria-valuemax'));
+        });
+
+        it('holds a paused run without a total still and empty, rather than moving or full', async () => {
+            await render(
+                buildState({
+                    ...v2Run,
+                    status: DiscoveryStatus.Stopped,
+                    connectorStatus: DiscoveryStatus.Stopped,
+                    progress: { ...v2Run.progress, targetsTotal: undefined },
+                }),
+            );
+
+            const bar = container.querySelector('[data-testid="provider-progress-bar"] [role="progressbar"]');
+            expect(bar?.hasAttribute('data-indeterminate')).toBe(false);
+            expect(bar?.getAttribute('aria-valuenow')).toBe('0');
+        });
+
+        it('draws a run that ended early in the tone of how it ended, not as a clean finish', async () => {
+            const fill = () => container.querySelector('[data-testid="provider-progress-bar"] [data-testid="progress-bar-fill"]');
+
+            await render(
+                buildState({ ...v2Run, status: DiscoveryStatus.Failed, progress: { ...v2Run.progress, targetsTotal: undefined } }),
+            );
+            expect(fill()?.className).toContain('bg-warning-solid');
+
+            await render(
+                buildState({ ...v2Run, status: DiscoveryStatus.Cancelled, progress: { ...v2Run.progress, targetsTotal: undefined } }),
+            );
+            expect(fill()?.className).toContain('bg-info-solid');
+        });
+
+        it('keeps the true ratio of a run cancelled partway through a known total', async () => {
+            await render(
+                buildState({
+                    ...v2Run,
+                    status: DiscoveryStatus.Cancelled,
+                    progress: { ...v2Run.progress, targetsProcessed: 300, targetsTotal: 768 },
+                }),
+            );
+
+            const bar = container.querySelector('[data-testid="provider-progress-bar"] [role="progressbar"]');
+            expect(bar?.getAttribute('aria-valuenow')).toBe('300');
+            expect(bar?.getAttribute('aria-valuemax')).toBe('768');
+        });
+
+        describe('a Provider that counts no targets', () => {
+            const searchProgress = (byResource: Record<string, unknown>) => ({
+                phase: 'searching',
+                byResource,
+                updatedAt: '2026-09-13T12:32:07.000Z',
+            });
+
+            it('draws the bar from the items of its one resource against their estimate', async () => {
+                await render(
+                    buildState({
+                        ...v2Run,
+                        resources: [Resource.Certificates],
+                        progress: searchProgress({ certificates: { produced: 3700, totalEstimate: 12000 } }),
+                    }),
+                );
+
+                const bar = container.querySelector('[data-testid="provider-progress-bar"] [role="progressbar"]');
+                expect(bar?.getAttribute('aria-valuenow')).toBe('3700');
+                expect(bar?.getAttribute('aria-valuemax')).toBe('12000');
+                expect(bar?.getAttribute('aria-label')).toBe('Discovery Provider: 3,700 / ~12,000 certificates');
+                expect(container.querySelector('[data-testid="targets-caption"]')?.textContent).toBe('3,700 / ~12,000 certificates');
+                expect(rowText('certificates')).toBe('Certificate3,700~12,000—');
+            });
+
+            it('says how many items it found when it has no estimate, and fills the bar only once it is done', async () => {
+                const run = {
+                    ...v2Run,
+                    resources: [Resource.Certificates],
+                    progress: searchProgress({ certificates: { produced: 1180 } }),
+                };
+                const bar = () => container.querySelector('[data-testid="provider-progress-bar"] [role="progressbar"]');
+
+                await render(buildState(run));
+                expect(bar()?.getAttribute('data-indeterminate')).toBe('true');
+                expect(container.querySelector('[data-testid="targets-caption"]')?.textContent).toBe('1,180 certificates found');
+
+                await render(buildState({ ...run, status: DiscoveryStatus.Completed }));
+                expect(bar()?.hasAttribute('data-indeterminate')).toBe(false);
+                expect(bar()?.getAttribute('aria-valuenow')).toBe(bar()?.getAttribute('aria-valuemax'));
+                expect(container.querySelector('[data-testid="targets-caption"]')?.textContent).toBe('1,180 certificates found');
+            });
+
+            it('draws no items count for a run of several resources while its Provider has reported only one', async () => {
+                await render(
+                    buildState({
+                        ...v2Run,
+                        progress: searchProgress({ certificates: { produced: 3700, totalEstimate: 12000 } }),
+                    }),
+                );
+
+                expect(container.querySelector('[data-testid="targets-caption"]')?.textContent).toBe('No target count reported');
+            });
+
+            it('reports no count for a run with several resources, which has no single count to draw', async () => {
+                await render(
+                    buildState({
+                        ...v2Run,
+                        progress: searchProgress({ certificates: { produced: 3700, totalEstimate: 12000 }, keys: { produced: 4 } }),
+                    }),
+                );
+
+                const bar = container.querySelector('[data-testid="provider-progress-bar"] [role="progressbar"]');
+                expect(bar?.getAttribute('data-indeterminate')).toBe('true');
+                expect(container.querySelector('[data-testid="targets-caption"]')?.textContent).toBe('No target count reported');
+                expect(rowText('certificates')).toBe('Certificate3,700~12,000—');
+                expect(rowText('keys')).toBe('Key4——');
+            });
+        });
+
+        it('draws a full bar when there is nothing to import, never an indeterminate one', async () => {
+            await render(
+                buildState({ ...v2Run, status: DiscoveryStatus.Processing, itemsNewlyDiscovered: 0, itemsProcessed: 0, itemsFailed: 0 }),
+            );
+
+            const bar = container.querySelector('[data-testid="import-progress-bar"] [role="progressbar"]');
+            expect(bar?.hasAttribute('data-indeterminate')).toBe(false);
+            expect(container.querySelector('[data-testid="import-progress"]')?.textContent).toContain('Nothing to import');
+        });
+
+        it('keeps its place for a v2 run whose Provider has reported nothing yet, and says so', async () => {
+            await render(buildState({ ...v2Run, progress: undefined }));
+
+            expect(container.querySelector('[data-testid="widget-Progress"]')?.textContent).toContain('No progress reported yet.');
+            expect(container.querySelector('[data-testid="provider-progress"]')).toBeNull();
+        });
+
+        it('says no progress was reported once the Provider is done with a run that never reported any', async () => {
+            await render(buildState({ ...v2Run, status: DiscoveryStatus.Completed, progress: undefined }));
+
+            expect(container.querySelector('[data-testid="widget-Progress"]')?.textContent).toContain(
+                'The Discovery Provider reported no progress for this run.',
+            );
+        });
+
+        it('lets Progress and Import summary shrink to share their row, so a table measured at full width cannot hold it', async () => {
+            await render(buildState(v2Run));
+
+            for (const title of ['Progress', 'Import summary']) {
+                expect(container.querySelector(`[data-testid="widget-${title}"]`)?.className).toContain('md:min-w-0');
+            }
+        });
+
+        it('lists the per-resource breakdown by resource label', async () => {
+            await render(buildState(v2Run));
+
+            expect(rowText('certificates')).toBe('Certificate48~120collecting');
+            expect(rowText('keys')).toBe('Key4——');
+        });
+    });
+
+    describe('results', () => {
+        it('groups the counts and flags a failed import', async () => {
+            await render(buildState(v2Run));
+
+            expect(rowText('itemsDiscovered')).toBe('Items received52');
+            expect(rowText('itemsNewlyDiscovered')).toBe('New to the inventory7');
+            expect(container.querySelector('[data-testid="items-failed"]')?.textContent).toBe('1');
+            expect(container.querySelector('[data-testid="widget-Import summary"]')?.textContent).toContain('All resources');
+            expect(container.querySelector('[data-testid="widget-Import summary"]')?.textContent).toContain('Certificates only');
+        });
+
+        it('explains a provider figure above the saved one as repeats on a completed certificates-only run', async () => {
+            await render(
+                buildState({
+                    ...v2Run,
+                    status: DiscoveryStatus.Completed,
+                    resources: [Resource.Certificates],
+                    itemsDiscovered: 12,
+                    totalCertificatesDiscovered: 8,
+                    connectorTotalCertificatesDiscovered: 12,
+                }),
+            );
+
+            expect(container.querySelector('[data-testid="certificate-note-repeats"]')?.textContent).toBe(
+                '4 repeated a certificate already received in this run',
+            );
+            expect(container.querySelector('[data-testid="certificate-note-notHandedOver"]')).toBeNull();
+        });
+
+        it('says nothing rather than zero when the provider reported no certificate count', async () => {
+            await render(
+                buildState({
+                    ...v2Run,
+                    status: DiscoveryStatus.Completed,
+                    resources: [Resource.Certificates],
+                    itemsDiscovered: 12,
+                    totalCertificatesDiscovered: 8,
+                    connectorTotalCertificatesDiscovered: undefined,
+                }),
+            );
+
+            // Zero here would sit above a note counting four repeats, which is a table arguing with itself.
+            expect(rowText('connectorTotalCertificatesDiscovered')).toContain('—');
+            expect(container.querySelector('[data-testid="certificate-note-repeats"]')?.textContent).toContain('4 repeated');
+        });
+
+        it('says what was never handed over when a run ended before its provider finished', async () => {
+            await render(
+                buildState({
+                    ...v2Run,
+                    status: DiscoveryStatus.Cancelled,
+                    resources: [Resource.Certificates],
+                    itemsDiscovered: 9,
+                    totalCertificatesDiscovered: 8,
+                    connectorTotalCertificatesDiscovered: 12,
+                }),
+            );
+
+            expect(container.querySelector('[data-testid="certificate-note-notHandedOver"]')?.textContent).toContain('3 reported');
+        });
+
+        it('holds the never-handed-over note while a certificates-only run is still live', async () => {
+            await render(
+                buildState({
+                    ...v2Run,
+                    status: DiscoveryStatus.InProgress,
+                    resources: [Resource.Certificates],
+                    itemsDiscovered: 9,
+                    totalCertificatesDiscovered: 8,
+                    connectorTotalCertificatesDiscovered: 12,
+                }),
+            );
+
+            expect(container.querySelector('[data-testid="certificate-note-notHandedOver"]')).toBeNull();
+            expect(container.querySelector('[data-testid="certificate-note-repeats"]')).not.toBeNull();
+        });
+
+        it('omits the certificate counters for a run that never targeted certificates', async () => {
+            await render(buildState({ ...v2Run, resources: [Resource.Keys] }));
+
+            expect(container.querySelector('[data-testid="widget-Import summary"]')?.textContent).toContain('All resources');
+            expect(container.querySelector('[data-testid="widget-Import summary"]')?.textContent).not.toContain('Certificates only');
+        });
+
+        it('names the ending in words rather than the wire code', async () => {
+            await render(buildState({ ...v2Run, status: DiscoveryStatus.Cancelled }));
+            expect(container.querySelector('[data-testid="not-processed-banner"]')?.textContent).toContain('This run was cancelled');
+
+            await render(buildState({ ...v2Run, status: DiscoveryStatus.Failed }));
+            expect(container.querySelector('[data-testid="not-processed-banner"]')?.textContent).toContain('This run failed');
+            expect(container.querySelector('[data-testid="not-processed-banner"]')?.textContent).not.toContain('ended failed');
+        });
+
+        it('derives one Results view per run resource, certificates keeping their own view', async () => {
+            await render(buildState(v2Run));
+
+            expect(container.querySelector('[data-testid="discovery-certificates"]')).not.toBeNull();
+            expect(container.querySelector('[data-testid="discovery-items-keys"]')).not.toBeNull();
+        });
+
+        it.each([DiscoveryStatus.Cancelled, DiscoveryStatus.Failed])('shows the not-processed banner for a %s run', async (status) => {
+            await render(buildState({ ...v2Run, status }));
+
+            expect(container.querySelector('[data-testid="not-processed-banner"]')).not.toBeNull();
+        });
+
+        it('shows no banner for a run that completed', async () => {
+            await render(buildState(v1Run));
+
+            expect(container.querySelector('[data-testid="not-processed-banner"]')).toBeNull();
+        });
+    });
+
+    describe('opening', () => {
+        const dispatched = () => dispatch.mock.calls.map((call) => call[0]);
+
+        it('loads a run the store does not hold after a reset', async () => {
+            await render(buildState(undefined));
+
+            expect(dispatched().map((action) => action?.type)).toContain('discoveries/resetState');
+            expect(dispatched().find((action) => action?.type === 'discoveries/getDiscoveryDetail')?.payload).toEqual({ uuid: 'disc-1' });
+        });
+
+        it('re-reads the run already on screen in place, so its tables keep their state', async () => {
+            await render(buildState(v2Run));
+
+            expect(dispatched().map((action) => action?.type)).not.toContain('discoveries/resetState');
+            expect(dispatched().find((action) => action?.type === 'discoveries/getDiscoveryDetail')?.payload).toEqual({
+                uuid: 'disc-1',
+                keepCurrent: true,
+            });
+            expect(container.querySelector('[data-testid="skeleton"]')).toBeNull();
+        });
+
+        it('hides a run left over from another detail page and resets before loading this one', async () => {
+            await render(buildState({ ...v2Run, uuid: 'disc-0' }));
+
+            expect(container.querySelector('[data-testid="skeleton"]')).not.toBeNull();
+            expect(container.querySelector('[data-testid="discovery-certificates"]')).toBeNull();
+            expect(dispatched().map((action) => action?.type)).toContain('discoveries/resetState');
+            expect(dispatched().find((action) => action?.type === 'discoveries/getDiscoveryDetail')?.payload).toEqual({ uuid: 'disc-1' });
+        });
+    });
+
+    describe('refreshing', () => {
+        it('has one refresh button, on Discovery Details, which re-reads the trigger summary too', async () => {
+            const state = buildState(v2Run);
+            (state.rules as any).triggerHistorySummary = {
+                associationObjectUuid: 'disc-1',
+                objectsEvaluated: 1,
+                objectsMatched: 1,
+                objectsIgnored: 0,
+            };
+            await render(state);
+
+            expect(container.querySelector('[data-testid="widget-Triggers summary"]')).not.toBeNull();
+            expect(Array.from(container.querySelectorAll('[data-testid^="refresh-"]')).map((b) => b.getAttribute('data-testid'))).toEqual([
+                'refresh-Discovery Details',
+            ]);
+
+            dispatch.mockClear();
+            await act(async () => {
+                container.querySelector<HTMLButtonElement>('[data-testid="refresh-Discovery Details"]')?.click();
+            });
+            expect(dispatch.mock.calls.map((call) => call[0]?.type)).toContain('rules/getTriggerHistorySummary');
+        });
+
+        it('keeps the page while a refresh is in flight and shows the skeleton only before the first load', async () => {
+            const refreshing = buildState(v2Run);
+            refreshing.discoveries.isFetchingDetail = true;
+            await render(refreshing);
+            expect(container.querySelector('[data-testid="skeleton"]')).toBeNull();
+            expect(container.querySelector('[data-testid="widget-Discovery Details"]')).not.toBeNull();
+
+            const firstLoad = buildState(undefined);
+            firstLoad.discoveries.isFetchingDetail = true;
+            await render(firstLoad);
+            expect(container.querySelector('[data-testid="skeleton"]')).not.toBeNull();
+        });
+    });
+
+    describe('re-reading a live run on its own', () => {
+        const POLL = 10_000;
+
+        beforeEach(() => {
+            vi.useFakeTimers();
+            vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
+            vi.spyOn(document, 'hasFocus').mockReturnValue(true);
+        });
+
+        afterEach(() => {
+            vi.useRealTimers();
+            vi.restoreAllMocks();
+        });
+
+        const dispatched = () => dispatch.mock.calls.map((call) => call[0]);
+        const polls = () => dispatched().filter((action) => action?.type === 'discoveries/getDiscoveryDetail' && action.payload.poll);
+        const tick = async () => {
+            await act(async () => {
+                vi.advanceTimersByTime(POLL);
+            });
+        };
+
+        it('polls the run in place every ten seconds, and nothing else, while it is live', async () => {
+            await render(buildState(v2Run));
+            dispatch.mockClear();
+
+            await act(async () => {
+                vi.advanceTimersByTime(POLL - 1);
+            });
+            expect(polls()).toHaveLength(0);
+
+            await act(async () => {
+                vi.advanceTimersByTime(1);
+            });
+            expect(dispatched()).toEqual([{ type: 'discoveries/getDiscoveryDetail', payload: { uuid: 'disc-1', poll: true } }]);
+        });
+
+        it('keeps polling while the platform imports what the Provider found', async () => {
+            await render(buildState({ ...v2Run, status: DiscoveryStatus.Processing }));
+            dispatch.mockClear();
+
+            await tick();
+            expect(polls()).toHaveLength(1);
+        });
+
+        it('leaves a run alone once it has ended, and while it is stopped', async () => {
+            for (const status of [DiscoveryStatus.Completed, DiscoveryStatus.Stopped]) {
+                await render(buildState({ ...v2Run, status }));
+                dispatch.mockClear();
+
+                await tick();
+                expect(polls()).toHaveLength(0);
+            }
+        });
+
+        it('skips a tick while a read or a lifecycle call is in flight, whose own answer is newer', async () => {
+            for (const flag of ['isFetchingDetail', 'isPollingDetail', 'isStopping']) {
+                const state = buildState(v2Run);
+                (state.discoveries as any)[flag] = true;
+                await render(state);
+                dispatch.mockClear();
+
+                await tick();
+                expect(polls()).toHaveLength(0);
+            }
+        });
+
+        it('stops on a locked page, which has nothing to show an answer on', async () => {
+            const state: any = buildState(v2Run);
+            state.userInterface = { widgetLocks: [{ widgetName: LockWidgetNameEnum.DiscoveryDetails }] };
+            await render(state);
+            dispatch.mockClear();
+
+            await tick();
+            expect(polls()).toHaveLength(0);
+        });
+
+        it('re-reads the trigger summary once, when the run on screen reaches its end', async () => {
+            await render(buildState(v2Run));
+            dispatch.mockClear();
+
+            await tick();
+            expect(dispatched().map((action) => action?.type)).not.toContain('rules/getTriggerHistorySummary');
+
+            await render(buildState({ ...v2Run, status: DiscoveryStatus.Completed }));
+            expect(dispatched().filter((action) => action?.type === 'rules/getTriggerHistorySummary')).toEqual([
+                { type: 'rules/getTriggerHistorySummary', payload: { triggerObjectUuid: 'disc-1' } },
+            ]);
+        });
+
+        it('follows a v1 run through the overrun warning Core gives while its Provider is still working', async () => {
+            await render(buildState({ ...v1Run, status: DiscoveryStatus.InProgress, connectorStatus: DiscoveryStatus.InProgress }));
+            dispatch.mockClear();
+
+            // Past its wait limit Core marks a v1 run Warning and keeps waiting on the Provider: the run has not ended.
+            await render(buildState({ ...v1Run, status: DiscoveryStatus.Warning, connectorStatus: DiscoveryStatus.InProgress }));
+            expect(dispatched().map((action) => action?.type)).not.toContain('rules/getTriggerHistorySummary');
+
+            await tick();
+            expect(polls()).toHaveLength(1);
+
+            await render(buildState({ ...v1Run, status: DiscoveryStatus.Completed }));
+            expect(dispatched().filter((action) => action?.type === 'rules/getTriggerHistorySummary')).toHaveLength(1);
+        });
+
+        it('leaves the trigger summary alone when a stopped run is cancelled, since no triggers ran', async () => {
+            await render(buildState({ ...v2Run, status: DiscoveryStatus.Stopped }));
+            dispatch.mockClear();
+
+            await render(buildState({ ...v2Run, status: DiscoveryStatus.Cancelled }));
+            expect(dispatched().map((action) => action?.type)).not.toContain('rules/getTriggerHistorySummary');
+        });
+    });
+
+    describe('run messages', () => {
+        it('badges the tab from the detail count without fetching the log', async () => {
+            await render(buildState(v2Run));
+
+            expect(container.querySelector('[data-testid="run-message-count"]')?.textContent).toBe('3');
+            expect(dispatch).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'discoveries/getDiscoveryMessages' }));
+        });
+
+        it('shows the interface the run is driven through, and no kind, which a v2 provider does not have', async () => {
+            await render(buildState(v2Run));
+
+            expect(rowText('connectorInterface')).toBe('Connector InterfaceDiscovery (v2)');
+            expect(container.querySelector('[data-testid="row-kind"]')).toBeNull();
+        });
+
+        it('says when a v2 provider has reported no run metadata, and stays quiet for a v1 run', async () => {
+            await render(buildState(v2Run));
+            expect(container.querySelector('[data-testid="no-run-metadata"]')).not.toBeNull();
+
+            await render(buildState({ ...v2Run, metadata: [{ connectorUuid: 'conn-1', connectorName: 'x', items: [] }] }));
+            expect(container.querySelector('[data-testid="no-run-metadata"]')).toBeNull();
+
+            await render(buildState(v1Run));
+            expect(container.querySelector('[data-testid="no-run-metadata"]')).toBeNull();
+        });
+
+        it('titles the tab Messages', async () => {
+            await render(buildState(v2Run));
+
+            expect(container.querySelector('[data-testid="tab-messages"] h2')?.textContent).toBe('Messages3');
+        });
+
+        it('says when a reading carries no time rather than leaving the caption blank', async () => {
+            await render(buildState({ ...v2Run, progress: { ...v2Run.progress, updatedAt: undefined } }));
+
+            expect(container.querySelector('[data-testid="progress-recorded"]')?.textContent).toBe('time of this reading not recorded');
+        });
+    });
+});

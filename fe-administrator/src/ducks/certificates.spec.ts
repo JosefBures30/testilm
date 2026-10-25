@@ -1,0 +1,1181 @@
+import { describe, expect, test, vi } from 'vitest';
+import reducer, { actions, initialState, selectors } from './certificates';
+
+vi.mock('utils/download', () => ({
+    downloadFileZip: vi.fn(),
+}));
+
+describe('certificates slice', () => {
+    test('returns initial state for unknown action', () => {
+        expect(reducer(undefined, { type: 'unknown' })).toEqual(initialState);
+    });
+
+    test('resetState returns initialState', () => {
+        const modified = {
+            ...initialState,
+            isFetchingDetail: true,
+            certificates: [{ uuid: 'cert-1' }] as any,
+            deleteErrorMessage: 'some error',
+        };
+        const next = reducer(modified as any, actions.resetState());
+        expect(next).toEqual(initialState);
+    });
+
+    test.each([
+        ['bulkUpdateGroupSuccess', () => actions.bulkUpdateGroupSuccess({ uuids: ['c1'] })],
+        ['bulkDeleteGroupSuccess', () => actions.bulkDeleteGroupSuccess({ uuids: ['c1'] })],
+        ['uploadCertificateSuccess', () => actions.uploadCertificateSuccess()],
+        ['bulkUpdateRaProfileSuccess', () => actions.bulkUpdateRaProfileSuccess({ uuids: ['c1'] })],
+        ['importCertificatesSuccess', () => actions.importCertificatesSuccess({ results: [] })],
+        ['bulkDeleteSuccess', () => actions.bulkDeleteSuccess({ response: {} as any })],
+    ])('%s bumps listRefreshToken so the page refetches through the host', (_name, action) => {
+        const next = reducer(initialState, action());
+
+        expect(next.listRefreshToken).toBe(initialState.listRefreshToken + 1);
+    });
+
+    test('refreshListInBackground bumps only the background token, so the page keeps its selection', () => {
+        const next = reducer(initialState, actions.refreshListInBackground());
+
+        expect(next.listBackgroundRefreshToken).toBe(initialState.listBackgroundRefreshToken + 1);
+        expect(next.listRefreshToken).toBe(initialState.listRefreshToken);
+    });
+
+    test('a mutation that reports no success leaves listRefreshToken alone', () => {
+        const next = reducer(initialState, actions.bulkUpdateGroupFailure({ error: 'nope' }));
+
+        expect(next.listRefreshToken).toBe(initialState.listRefreshToken);
+    });
+
+    test('clearDeleteErrorMessages clears deleteErrorMessage', () => {
+        const state = { ...initialState, deleteErrorMessage: 'some error' };
+        const next = reducer(state, actions.clearDeleteErrorMessages());
+        expect(next.deleteErrorMessage).toBe('');
+    });
+
+    test('clearCertificateDetail clears certificateDetail', () => {
+        const state = { ...initialState, certificateDetail: { uuid: 'cert-1' } as any };
+        const next = reducer(state, actions.clearCertificateDetail());
+        expect(next.certificateDetail).toBeUndefined();
+    });
+
+    test('setIncludeArchived sets isIncludeArchived', () => {
+        let next = reducer(initialState, actions.setIncludeArchived(true));
+        expect(next.isIncludeArchived).toBe(true);
+        next = reducer(next, actions.setIncludeArchived(false));
+        expect(next.isIncludeArchived).toBe(false);
+    });
+
+    test('listCertificates clears certificates list', () => {
+        const state = { ...initialState, certificates: [{ uuid: 'cert-1' }] as any };
+        const next = reducer(state, actions.listCertificates({} as any));
+        expect(next.certificates).toEqual([]);
+    });
+
+    test('listCertificatesSuccess stores certificates', () => {
+        const certs = [{ uuid: 'cert-1' }, { uuid: 'cert-2' }] as any;
+        const next = reducer(initialState, actions.listCertificatesSuccess(certs));
+        expect(next.certificates).toEqual(certs);
+    });
+
+    test('getCertificateDetail / success / failure update detail flags and data', () => {
+        let next = reducer(initialState, actions.getCertificateDetail({ uuid: 'cert-1' }));
+        expect(next.isFetchingDetail).toBe(true);
+        expect(next.certificateDetail).toBeUndefined();
+
+        const cert = { uuid: 'cert-1', commonName: 'Test' } as any;
+        next = reducer(next, actions.getCertificateDetailSuccess({ certificate: cert }));
+        expect(next.isFetchingDetail).toBe(false);
+        expect(next.certificateDetail).toEqual(cert);
+
+        next = reducer({ ...next, isFetchingDetail: true }, actions.getCertificateDetailFailure({ error: 'err' }));
+        expect(next.isFetchingDetail).toBe(false);
+    });
+
+    test('getCertificateRelations / success / failure update relations flags and data', () => {
+        let next = reducer(initialState, actions.getCertificateRelations({ uuid: 'cert-1' }));
+        expect(next.isFetchingRelations).toBe(true);
+        expect(next.certificateRelations).toBeUndefined();
+
+        const relations = { uuid: 'cert-1' } as any;
+        next = reducer(next, actions.getCertificateRelationsSuccess({ certificateRelations: relations }));
+        expect(next.isFetchingRelations).toBe(false);
+        expect(next.certificateRelations).toEqual(relations);
+
+        next = reducer({ ...next, isFetchingRelations: true }, actions.getCertificateRelationsFailure({ error: 'err' }));
+        expect(next.isFetchingRelations).toBe(false);
+    });
+
+    test('associateCertificate / success / failure update isAssociating', () => {
+        let next = reducer(initialState, actions.associateCertificate({ uuid: 'loc-1', certificateUuid: 'cert-1', relation: 'successor' }));
+        expect(next.isAssociating).toBe(true);
+
+        next = reducer(next, actions.associateCertificateSuccess({ uuid: 'loc-1', certificateUuid: 'cert-1', relation: 'successor' }));
+        expect(next.isAssociating).toBe(false);
+
+        next = reducer({ ...next, isAssociating: true }, actions.associateCertificateFailure({ error: 'err' }));
+        expect(next.isAssociating).toBe(false);
+    });
+
+    test('deassociateCertificate / success / failure update isDeassociating', () => {
+        let next = reducer(
+            initialState,
+            actions.deassociateCertificate({ uuid: 'loc-1', certificateUuid: 'cert-1', relation: 'predecessor' }),
+        );
+        expect(next.isDeassociating).toBe(true);
+
+        next = reducer(next, actions.deassociateCertificateSuccess({ uuid: 'loc-1', certificateUuid: 'cert-1', relation: 'predecessor' }));
+        expect(next.isDeassociating).toBe(false);
+
+        next = reducer({ ...next, isDeassociating: true }, actions.deassociateCertificateFailure({ error: 'err' }));
+        expect(next.isDeassociating).toBe(false);
+    });
+
+    test('getCertificateValidationResult / success / failure update validation flags and data', () => {
+        let next = reducer(initialState, actions.getCertificateValidationResult({ uuid: 'cert-1' }));
+        expect(next.isFetchingValidationResult).toBe(true);
+        expect(next.validationResult).toBeUndefined();
+
+        const result = { status: 'valid' } as any;
+        next = reducer(next, actions.getCertificateValidationResultSuccess(result));
+        expect(next.isFetchingValidationResult).toBe(false);
+        expect(next.validationResult).toEqual(result);
+
+        next = reducer({ ...next, isFetchingValidationResult: true }, actions.getCertificateValidationResultFailure({ error: 'err' }));
+        expect(next.isFetchingValidationResult).toBe(false);
+    });
+
+    test('issueCertificate / issueCertificateNew / success / failure update isIssuing', () => {
+        let next = reducer(
+            initialState,
+            actions.issueCertificate({ authorityUuid: 'auth-1', raProfileUuid: 'ra-1', signRequest: {} as any }),
+        );
+        expect(next.isIssuing).toBe(true);
+
+        next = reducer(
+            initialState,
+            actions.issueCertificateNew({ authorityUuid: 'auth-1', raProfileUuid: 'ra-1', certificateUuid: 'c-1' }),
+        );
+        expect(next.isIssuing).toBe(true);
+
+        next = reducer(next, actions.issueCertificateSuccess({ uuid: 'cert-1' }));
+        expect(next.isIssuing).toBe(false);
+
+        next = reducer({ ...next, isIssuing: true }, actions.issueCertificateFailure({ error: 'err' }));
+        expect(next.isIssuing).toBe(false);
+    });
+
+    test('issueCertificateFailure stores validation errors and issueCertificate / clearIssueErrors reset them', () => {
+        let next = reducer(
+            { ...initialState, isIssuing: true },
+            actions.issueCertificateFailure({ error: 'err', validationErrors: ['e1', 'e2'] }),
+        );
+        expect(next.issueValidationErrors).toEqual(['e1', 'e2']);
+
+        next = reducer(next, actions.issueCertificate({ authorityUuid: 'auth-1', raProfileUuid: 'ra-1', signRequest: {} as any }));
+        expect(next.issueValidationErrors).toBeUndefined();
+
+        next = reducer({ ...initialState, issueValidationErrors: ['stale'] }, actions.clearIssueErrors());
+        expect(next.issueValidationErrors).toBeUndefined();
+
+        next = reducer({ ...initialState, isIssuing: true }, actions.issueCertificateFailure({ error: 'err' }));
+        expect(next.issueValidationErrors).toBeUndefined();
+    });
+
+    test('issueCertificateSuccess keeps request-attribute warnings with the issued certificate uuid', () => {
+        const next = reducer(
+            { ...initialState, isIssuing: true },
+            actions.issueCertificateSuccess({ uuid: 'cert-1', requestAttributeWarnings: ['w1', 'w2'] }),
+        );
+        expect(next.issueWarnings).toEqual({ certificateUuid: 'cert-1', messages: ['w1', 'w2'] });
+    });
+
+    test('issueCertificateSuccess without warnings, or with an empty list, leaves none', () => {
+        const stale = { ...initialState, issueWarnings: { certificateUuid: 'old', messages: ['stale'] } };
+
+        expect(reducer(stale, actions.issueCertificateSuccess({ uuid: 'cert-1' })).issueWarnings).toBeUndefined();
+        expect(
+            reducer(stale, actions.issueCertificateSuccess({ uuid: 'cert-1', requestAttributeWarnings: [] })).issueWarnings,
+        ).toBeUndefined();
+    });
+
+    test('issueCertificate and clearIssueWarnings reset warnings, clearIssueErrors does not', () => {
+        const withWarnings = { ...initialState, issueWarnings: { certificateUuid: 'cert-1', messages: ['w1'] } };
+
+        expect(
+            reducer(withWarnings, actions.issueCertificate({ authorityUuid: 'auth-1', raProfileUuid: 'ra-1', signRequest: {} as any }))
+                .issueWarnings,
+        ).toBeUndefined();
+        expect(reducer(withWarnings, actions.clearIssueWarnings()).issueWarnings).toBeUndefined();
+        expect(reducer(withWarnings, actions.clearIssueErrors()).issueWarnings).toEqual(withWarnings.issueWarnings);
+    });
+
+    test('revokeCertificate / success / failure update isRevoking and remove from list', () => {
+        let next = reducer(
+            initialState,
+            actions.revokeCertificate({
+                authorityUuid: 'auth-1',
+                raProfileUuid: 'ra-1',
+                uuid: 'cert-1',
+                revokeRequest: {} as any,
+            }),
+        );
+        expect(next.isRevoking).toBe(true);
+
+        const stateWithCerts = {
+            ...initialState,
+            isRevoking: true,
+            certificates: [{ uuid: 'cert-1' }, { uuid: 'cert-2' }] as any,
+        };
+        next = reducer(stateWithCerts, actions.revokeCertificateSuccess({ uuid: 'cert-1' }));
+        expect(next.isRevoking).toBe(false);
+        expect(next.certificates).toHaveLength(1);
+        expect(next.certificates[0].uuid).toBe('cert-2');
+
+        next = reducer({ ...next, isRevoking: true }, actions.revokeCertificateFailure({ error: 'err' }));
+        expect(next.isRevoking).toBe(false);
+    });
+
+    test('renewCertificate / success / failure update isRenewing', () => {
+        let next = reducer(
+            initialState,
+            actions.renewCertificate({
+                authorityUuid: 'auth-1',
+                raProfileUuid: 'ra-1',
+                uuid: 'cert-1',
+                renewRequest: {} as any,
+            }),
+        );
+        expect(next.isRenewing).toBe(true);
+
+        next = reducer(next, actions.renewCertificateSuccess({ uuid: 'cert-1' }));
+        expect(next.isRenewing).toBe(false);
+
+        next = reducer({ ...next, isRenewing: true }, actions.renewCertificateFailure({ error: 'err' }));
+        expect(next.isRenewing).toBe(false);
+    });
+
+    test('rekeyCertificate / success / failure update isRekeying', () => {
+        let next = reducer(
+            initialState,
+            actions.rekeyCertificate({
+                authorityUuid: 'auth-1',
+                raProfileUuid: 'ra-1',
+                uuid: 'cert-1',
+                rekey: {} as any,
+            }),
+        );
+        expect(next.isRekeying).toBe(true);
+
+        next = reducer(next, actions.rekeyCertificateSuccess({ uuid: 'cert-1' }));
+        expect(next.isRekeying).toBe(false);
+
+        next = reducer({ ...next, isRekeying: true }, actions.rekeyCertificateFailure({ error: 'err' }));
+        expect(next.isRekeying).toBe(false);
+    });
+
+    test('renewCertificateFailure keeps the error for the dialog; a new attempt and clearRenewErrors drop it', () => {
+        const renewAction = actions.renewCertificate({ authorityUuid: 'a', raProfileUuid: 'r', uuid: 'cert-1', renewRequest: {} as any });
+
+        const failed = reducer(initialState, actions.renewCertificateFailure({ error: 'challenge is invalid' }));
+        expect(selectors.renewErrorMessage({ certificates: failed } as any)).toBe('challenge is invalid');
+
+        expect(reducer(failed, renewAction).renewErrorMessage).toBeUndefined();
+        expect(reducer(failed, actions.clearRenewErrors()).renewErrorMessage).toBeUndefined();
+    });
+
+    test('rekeyCertificateFailure keeps the error for the dialog; a new attempt and clearRekeyErrors drop it', () => {
+        const rekeyAction = actions.rekeyCertificate({ authorityUuid: 'a', raProfileUuid: 'r', uuid: 'cert-1', rekey: {} as any });
+
+        const failed = reducer(initialState, actions.rekeyCertificateFailure({ error: 'challenge is required' }));
+        expect(selectors.rekeyErrorMessage({ certificates: failed } as any)).toBe('challenge is required');
+
+        expect(reducer(failed, rekeyAction).rekeyErrorMessage).toBeUndefined();
+        expect(reducer(failed, actions.clearRekeyErrors()).rekeyErrorMessage).toBeUndefined();
+    });
+
+    test('getCertificateHistory / success / failure update history flags and data', () => {
+        const stateWithHistory = { ...initialState, certificateHistory: [{ uuid: 'h-1' }] as any };
+        let next = reducer(stateWithHistory, actions.getCertificateHistory({ uuid: 'cert-1' }));
+        expect(next.isFetchingHistory).toBe(true);
+        expect(next.certificateHistory).toEqual([]);
+
+        const history = [{ uuid: 'h-2' }] as any;
+        next = reducer(next, actions.getCertificateHistorySuccess({ certificateHistory: history }));
+        expect(next.isFetchingHistory).toBe(false);
+        expect(next.certificateHistory).toEqual(history);
+
+        next = reducer({ ...next, isFetchingHistory: true }, actions.getCertificateHistoryFailure({ error: 'err' }));
+        expect(next.isFetchingHistory).toBe(false);
+    });
+
+    test('listCertificateLocations / success / failure update location flags and data', () => {
+        let next = reducer(initialState, actions.listCertificateLocations({ uuid: 'cert-1' }));
+        expect(next.isFetchingLocations).toBe(true);
+        expect(next.certificateLocations).toEqual([]);
+
+        const locations = [{ uuid: 'loc-1' }] as any;
+        next = reducer(next, actions.listCertificateLocationsSuccess({ certificateLocations: locations }));
+        expect(next.isFetchingLocations).toBe(false);
+        expect(next.certificateLocations).toEqual(locations);
+
+        next = reducer({ ...next, isFetchingLocations: true }, actions.listCertificateLocationsFailure({ error: 'err' }));
+        expect(next.isFetchingLocations).toBe(false);
+    });
+
+    test('deleteCertificate / success / failure update delete flags and remove from list', () => {
+        let next = reducer(initialState, actions.deleteCertificate({ uuid: 'cert-1' }));
+        expect(next.isDeleting).toBe(true);
+        expect(next.deleteErrorMessage).toBe('');
+
+        const stateWithCerts = {
+            ...initialState,
+            isDeleting: true,
+            certificates: [{ uuid: 'cert-1' }, { uuid: 'cert-2' }] as any,
+            certificateDetail: { uuid: 'cert-1' } as any,
+        };
+        next = reducer(stateWithCerts, actions.deleteCertificateSuccess({ uuid: 'cert-1' }));
+        expect(next.isDeleting).toBe(false);
+        expect(next.certificates).toHaveLength(1);
+        expect(next.certificates[0].uuid).toBe('cert-2');
+        expect(next.certificateDetail).toBeUndefined();
+
+        next = reducer({ ...next, isDeleting: true }, actions.deleteCertificateFailure({ error: 'delete failed' }));
+        expect(next.isDeleting).toBe(false);
+        expect(next.deleteErrorMessage).toBe('delete failed');
+    });
+
+    test('deleteCertificateFailure with undefined error uses Unknown error', () => {
+        const next = reducer({ ...initialState, isDeleting: true }, actions.deleteCertificateFailure({ error: undefined }));
+        expect(next.deleteErrorMessage).toBe('Unknown error');
+    });
+
+    test('updateGroup / success / failure update isUpdatingGroup', () => {
+        let next = reducer(initialState, actions.updateGroup({ uuid: 'cert-1', updateGroupRequest: {} as any }));
+        expect(next.isUpdatingGroup).toBe(true);
+
+        next = reducer(next, actions.updateGroupSuccess({ uuid: 'cert-1' }));
+        expect(next.isUpdatingGroup).toBe(false);
+
+        next = reducer({ ...next, isUpdatingGroup: true }, actions.updateGroupFailure({ error: 'err' }));
+        expect(next.isUpdatingGroup).toBe(false);
+    });
+
+    test('deleteGroups / success / failure update isUpdatingGroup', () => {
+        let next = reducer(initialState, actions.deleteGroups({ uuid: 'cert-1' }));
+        expect(next.isUpdatingGroup).toBe(true);
+
+        next = reducer(next, actions.deleteGroupsSuccess({ uuid: 'cert-1' }));
+        expect(next.isUpdatingGroup).toBe(false);
+
+        next = reducer({ ...next, isUpdatingGroup: true }, actions.deleteGroupsFailure({ error: 'err' }));
+        expect(next.isUpdatingGroup).toBe(false);
+    });
+
+    test('updateCertificateTrustedStatus / success / failure update trusted status', () => {
+        let next = reducer(
+            initialState,
+            actions.updateCertificateTrustedStatus({ uuid: 'cert-1', updateCertificateTrustedStatusRequest: {} as any }),
+        );
+        expect(next.isUpdatingTrustedStatus).toBe(true);
+
+        const stateWithCerts = {
+            ...initialState,
+            isUpdatingTrustedStatus: true,
+            certificates: [{ uuid: 'cert-1', trustedCa: false }] as any,
+            certificateDetail: { uuid: 'cert-1', trustedCa: false } as any,
+        };
+        next = reducer(stateWithCerts, actions.updateCertificateTrustedStatusSuccess({ uuid: 'cert-1', trustedCa: true }));
+        expect(next.isUpdatingTrustedStatus).toBe(false);
+        expect(next.certificates[0].trustedCa).toBe(true);
+        expect(next.certificateDetail?.trustedCa).toBe(true);
+
+        next = reducer({ ...next, isUpdatingTrustedStatus: true }, actions.updateCertificateTrustedStatusFailure({ error: 'err' }));
+        expect(next.isUpdatingTrustedStatus).toBe(false);
+    });
+
+    test('updateRaProfile / success / failure update raProfile in certificates and detail', () => {
+        let next = reducer(
+            initialState,
+            actions.updateRaProfile({ uuid: 'cert-1', authorityUuid: 'auth-1', updateRaProfileRequest: {} as any }),
+        );
+        expect(next.isUpdatingRaProfile).toBe(true);
+
+        const raProfile = { uuid: 'ra-1', name: 'RA Profile' } as any;
+        const stateWithCerts = {
+            ...initialState,
+            isUpdatingRaProfile: true,
+            certificates: [{ uuid: 'cert-1', raProfile: undefined }] as any,
+            certificateDetail: { uuid: 'cert-1', raProfile: undefined } as any,
+        };
+        next = reducer(stateWithCerts, actions.updateRaProfileSuccess({ uuid: 'cert-1', raProfileUuid: 'ra-1', raProfile }));
+        expect(next.isUpdatingRaProfile).toBe(false);
+        expect(next.certificates[0].raProfile).toEqual(raProfile);
+        expect(next.certificateDetail?.raProfile).toEqual(raProfile);
+
+        next = reducer({ ...next, isUpdatingRaProfile: true }, actions.updateRaProfileFailure({ error: 'err' }));
+        expect(next.isUpdatingRaProfile).toBe(false);
+    });
+
+    test('deleteRaProfile / success / failure remove raProfile from certificates and detail', () => {
+        let next = reducer(initialState, actions.deleteRaProfile({ uuid: 'cert-1' }));
+        expect(next.isUpdatingRaProfile).toBe(true);
+
+        const stateWithCerts = {
+            ...initialState,
+            isUpdatingRaProfile: true,
+            certificates: [{ uuid: 'cert-1', raProfile: { uuid: 'ra-1' } }] as any,
+            certificateDetail: { uuid: 'cert-1', raProfile: { uuid: 'ra-1' } } as any,
+        };
+        next = reducer(stateWithCerts, actions.deleteRaProfileSuccess({ uuid: 'cert-1' }));
+        expect(next.isUpdatingRaProfile).toBe(false);
+        expect(next.certificates[0].raProfile).toBeUndefined();
+        expect(next.certificateDetail?.raProfile).toBeUndefined();
+
+        next = reducer({ ...next, isUpdatingRaProfile: true }, actions.deleteRaProfileFailure({ error: 'err' }));
+        expect(next.isUpdatingRaProfile).toBe(false);
+    });
+
+    test('updateOwner / success / failure update owner in certificates and detail', () => {
+        let next = reducer(
+            initialState,
+            actions.updateOwner({ uuid: 'cert-1', user: { uuid: 'u-1', username: 'alice' } as any, updateOwnerRequest: {} as any }),
+        );
+        expect(next.isUpdatingOwner).toBe(true);
+
+        const stateWithCerts = {
+            ...initialState,
+            isUpdatingOwner: true,
+            certificates: [{ uuid: 'cert-1', owner: undefined, ownerUuid: undefined }] as any,
+            certificateDetail: { uuid: 'cert-1', owner: undefined, ownerUuid: undefined } as any,
+        };
+        next = reducer(stateWithCerts, actions.updateOwnerSuccess({ uuid: 'cert-1', user: { uuid: 'u-1', username: 'alice' } as any }));
+        expect(next.isUpdatingOwner).toBe(false);
+        expect(next.certificates[0].owner).toBe('alice');
+        expect(next.certificateDetail?.owner).toBe('alice');
+        expect(next.certificateDetail?.ownerUuid).toBe('u-1');
+
+        next = reducer({ ...next, isUpdatingOwner: true }, actions.updateOwnerFailure({ error: 'err' }));
+        expect(next.isUpdatingOwner).toBe(false);
+    });
+
+    test('deleteOwner / success / failure clear owner from certificates and detail', () => {
+        let next = reducer(initialState, actions.deleteOwner({ uuid: 'cert-1' }));
+        expect(next.isUpdatingOwner).toBe(true);
+
+        const stateWithCerts = {
+            ...initialState,
+            isUpdatingOwner: true,
+            certificates: [{ uuid: 'cert-1', owner: 'alice', ownerUuid: 'u-1' }] as any,
+            certificateDetail: { uuid: 'cert-1', owner: 'alice', ownerUuid: 'u-1' } as any,
+        };
+        next = reducer(stateWithCerts, actions.deleteOwnerSuccess({ uuid: 'cert-1' }));
+        expect(next.isUpdatingOwner).toBe(false);
+        expect(next.certificates[0].owner).toBeUndefined();
+        expect(next.certificates[0].ownerUuid).toBeUndefined();
+        expect(next.certificateDetail?.owner).toBeUndefined();
+        expect(next.certificateDetail?.ownerUuid).toBeUndefined();
+
+        next = reducer({ ...next, isUpdatingOwner: true }, actions.deleteOwnerFailure({ error: 'err' }));
+        expect(next.isUpdatingOwner).toBe(false);
+    });
+
+    test('bulkUpdateGroup / success / failure update isBulkUpdatingGroup', () => {
+        let next = reducer(initialState, actions.bulkUpdateGroup({} as any));
+        expect(next.isBulkUpdatingGroup).toBe(true);
+
+        next = reducer(next, actions.bulkUpdateGroupSuccess({ uuids: ['cert-1'] }));
+        expect(next.isBulkUpdatingGroup).toBe(false);
+
+        next = reducer({ ...next, isBulkUpdatingGroup: true }, actions.bulkUpdateGroupFailure({ error: 'err' }));
+        expect(next.isBulkUpdatingGroup).toBe(false);
+    });
+
+    test('bulkDeleteGroup / success update isBulkUpdatingGroup', () => {
+        let next = reducer(initialState, actions.bulkDeleteGroup({ certificateUuids: ['cert-1'] }));
+        expect(next.isBulkUpdatingGroup).toBe(true);
+
+        next = reducer(next, actions.bulkDeleteGroupSuccess({ uuids: ['cert-1'] }));
+        expect(next.isBulkUpdatingGroup).toBe(false);
+    });
+
+    test('bulkUpdateRaProfile / success / failure toggle loading flag without mutating certificates', () => {
+        let next = reducer(initialState, actions.bulkUpdateRaProfile({ authorityUuid: 'auth-1', raProfileRequest: {} as any }));
+        expect(next.isBulkUpdatingRaProfile).toBe(true);
+
+        const oldRaProfile = { uuid: 'ra-old', name: 'Old RA' };
+        const stateWithCerts = {
+            ...initialState,
+            isBulkUpdatingRaProfile: true,
+            certificates: [
+                { uuid: 'cert-1', raProfile: oldRaProfile },
+                { uuid: 'cert-2', raProfile: oldRaProfile },
+            ] as any,
+            certificateDetail: { uuid: 'cert-1', raProfile: oldRaProfile } as any,
+        };
+        next = reducer(stateWithCerts, actions.bulkUpdateRaProfileSuccess({ uuids: ['cert-1', 'cert-2'] }));
+        expect(next.isBulkUpdatingRaProfile).toBe(false);
+        // Existing raProfile values are left untouched — the list refetch is the source of truth.
+        expect(next.certificates[0].raProfile).toEqual(oldRaProfile);
+        expect(next.certificates[1].raProfile).toEqual(oldRaProfile);
+        expect(next.certificateDetail?.raProfile).toEqual(oldRaProfile);
+
+        next = reducer({ ...next, isBulkUpdatingRaProfile: true }, actions.bulkUpdateRaProfileFailure({ error: 'err' }));
+        expect(next.isBulkUpdatingRaProfile).toBe(false);
+    });
+
+    test('bulkDeleteRaProfile / success / failure remove raProfile from list and detail', () => {
+        let next = reducer(initialState, actions.bulkDeleteRaProfile({ certificateUuids: ['cert-1'] }));
+        expect(next.isBulkUpdatingRaProfile).toBe(true);
+
+        const stateWithCerts = {
+            ...initialState,
+            isBulkUpdatingRaProfile: true,
+            certificates: [{ uuid: 'cert-1', raProfile: { uuid: 'ra-1' } }] as any,
+            certificateDetail: { uuid: 'cert-1', raProfile: { uuid: 'ra-1' } } as any,
+        };
+        next = reducer(stateWithCerts, actions.bulkDeleteRaProfileSuccess({ uuids: ['cert-1'] }));
+        expect(next.isBulkUpdatingRaProfile).toBe(false);
+        expect(next.certificates[0].raProfile).toBeUndefined();
+        expect(next.certificateDetail?.raProfile).toBeUndefined();
+
+        next = reducer({ ...next, isBulkUpdatingRaProfile: true }, actions.bulkDeleteRaProfileFailure({ error: 'err' }));
+        expect(next.isBulkUpdatingRaProfile).toBe(false);
+    });
+
+    test('bulkUpdateOwner / success / failure update owner in list and detail', () => {
+        let next = reducer(initialState, actions.bulkUpdateOwner({ user: { uuid: 'u-1', username: 'alice' } as any, request: {} as any }));
+        expect(next.isBulkUpdatingOwner).toBe(true);
+
+        const stateWithCerts = {
+            ...initialState,
+            isBulkUpdatingOwner: true,
+            certificates: [{ uuid: 'cert-1', owner: undefined, ownerUuid: undefined }] as any,
+            certificateDetail: { uuid: 'cert-1', owner: undefined, ownerUuid: undefined } as any,
+        };
+        next = reducer(
+            stateWithCerts,
+            actions.bulkUpdateOwnerSuccess({ uuids: ['cert-1'], user: { uuid: 'u-1', username: 'alice' } as any }),
+        );
+        expect(next.isBulkUpdatingOwner).toBe(false);
+        expect(next.certificates[0].owner).toBe('alice');
+        expect(next.certificates[0].ownerUuid).toBe('u-1');
+        expect(next.certificateDetail?.owner).toBe('alice');
+        expect(next.certificateDetail?.ownerUuid).toBe('u-1');
+
+        next = reducer({ ...next, isBulkUpdatingOwner: true }, actions.bulkUpdateOwnerFailure({ error: 'err' }));
+        expect(next.isBulkUpdatingOwner).toBe(false);
+    });
+
+    test('bulkDeleteOwner / success / failure clear owner from list and detail', () => {
+        let next = reducer(initialState, actions.bulkDeleteOwner({ certificateUuids: ['cert-1'] }));
+        expect(next.isBulkUpdatingOwner).toBe(true);
+
+        const stateWithCerts = {
+            ...initialState,
+            isBulkUpdatingOwner: true,
+            certificates: [{ uuid: 'cert-1', owner: 'alice', ownerUuid: 'u-1' }] as any,
+            certificateDetail: { uuid: 'cert-1', owner: 'alice', ownerUuid: 'u-1' } as any,
+        };
+        next = reducer(stateWithCerts, actions.bulkDeleteOwnerSuccess({ uuids: ['cert-1'] }));
+        expect(next.isBulkUpdatingOwner).toBe(false);
+        expect(next.certificates[0].owner).toBeUndefined();
+        expect(next.certificates[0].ownerUuid).toBeUndefined();
+        expect(next.certificateDetail?.owner).toBeUndefined();
+        expect(next.certificateDetail?.ownerUuid).toBeUndefined();
+
+        next = reducer({ ...next, isBulkUpdatingOwner: true }, actions.bulkDeleteOwnerFailure({ error: 'err' }));
+        expect(next.isBulkUpdatingOwner).toBe(false);
+    });
+
+    test('bulkDelete / success / failure update isBulkDeleting', () => {
+        let next = reducer(initialState, actions.bulkDelete({} as any));
+        expect(next.isBulkDeleting).toBe(true);
+        expect(next.deleteErrorMessage).toBe('');
+
+        next = reducer(next, actions.bulkDeleteSuccess({ response: {} as any }));
+        expect(next.isBulkDeleting).toBe(false);
+
+        next = reducer({ ...next, isBulkDeleting: true }, actions.bulkDeleteFailure({ error: 'bulk delete failed' }));
+        expect(next.isBulkDeleting).toBe(false);
+        expect(next.deleteErrorMessage).toBe('bulk delete failed');
+    });
+
+    test('bulkDeleteFailure with undefined error uses Unknown error', () => {
+        const next = reducer({ ...initialState, isBulkDeleting: true }, actions.bulkDeleteFailure({ error: undefined }));
+        expect(next.deleteErrorMessage).toBe('Unknown error');
+    });
+
+    test('uploadCertificate / success / failure update isUploading', () => {
+        let next = reducer(initialState, actions.uploadCertificate({} as any));
+        expect(next.isUploading).toBe(true);
+
+        next = reducer(next, actions.uploadCertificateSuccess());
+        expect(next.isUploading).toBe(false);
+
+        next = reducer({ ...next, isUploading: true }, actions.uploadCertificateFailure({ error: 'err' }));
+        expect(next.isUploading).toBe(false);
+    });
+
+    test('getIssuanceAttributes / success / failure update issuanceAttributes', () => {
+        let next = reducer(initialState, actions.getIssuanceAttributes({ raProfileUuid: 'ra-1', authorityUuid: 'auth-1' }));
+        expect(next.isFetchingIssuanceAttributes).toBe(true);
+
+        const attrs = [{ uuid: 'attr-1' }] as any;
+        next = reducer(next, actions.getIssuanceAttributesSuccess({ raProfileUuid: 'ra-1', issuanceAttributes: attrs }));
+        expect(next.isFetchingIssuanceAttributes).toBe(false);
+        expect(next.issuanceAttributes['ra-1']).toEqual(attrs);
+
+        next = reducer({ ...next, isFetchingIssuanceAttributes: true }, actions.getIssuanceAttributesFailure({ error: 'err' }));
+        expect(next.isFetchingIssuanceAttributes).toBe(false);
+    });
+
+    test('getRegisterAttributes / success / failure update registerAttributes', () => {
+        let next = reducer(initialState, actions.getRegisterAttributes({ raProfileUuid: 'ra-1', authorityUuid: 'auth-1' }));
+        expect(next.isFetchingRegisterAttributes).toBe(true);
+
+        const attrs = [{ uuid: 'attr-1' }] as any;
+        next = reducer(next, actions.getRegisterAttributesSuccess({ raProfileUuid: 'ra-1', registerAttributes: attrs }));
+        expect(next.isFetchingRegisterAttributes).toBe(false);
+        expect(next.registerAttributes['ra-1']).toEqual(attrs);
+
+        next = reducer(
+            { ...next, isFetchingRegisterAttributes: true },
+            actions.getRegisterAttributesFailure({ raProfileUuid: 'ra-1', error: 'err' }),
+        );
+        expect(next.isFetchingRegisterAttributes).toBe(false);
+        expect(next.registerAttributes['ra-1']).toBeUndefined();
+    });
+
+    test('getRegisterAttributesFailure leaves other profiles descriptors intact', () => {
+        const attrs = [{ uuid: 'attr-1' }] as any;
+        const loaded = reducer(initialState, actions.getRegisterAttributesSuccess({ raProfileUuid: 'ra-2', registerAttributes: attrs }));
+
+        const next = reducer(loaded, actions.getRegisterAttributesFailure({ raProfileUuid: 'ra-1', error: 'err' }));
+        expect(next.registerAttributes['ra-2']).toEqual(attrs);
+    });
+
+    test('getRevocationAttributes / success / failure update revocationAttributes', () => {
+        let next = reducer(initialState, actions.getRevocationAttributes({ raProfileUuid: 'ra-1', authorityUuid: 'auth-1' }));
+        expect(next.isFetchingRevocationAttributes).toBe(true);
+
+        const attrs = [{ uuid: 'attr-2' }] as any;
+        next = reducer(next, actions.getRevocationAttributesSuccess({ raProfileUuid: 'ra-1', revocationAttributes: attrs }));
+        expect(next.isFetchingRevocationAttributes).toBe(false);
+        expect(next.revocationAttributes).toEqual(attrs);
+
+        next = reducer({ ...next, isFetchingRevocationAttributes: true }, actions.getRevocationAttributesFailure({ error: 'err' }));
+        expect(next.isFetchingRevocationAttributes).toBe(false);
+        expect(next.revocationAttributes).toEqual([]);
+    });
+
+    test('clearRevocationAttributes resets revocationAttributes and the fetching flag', () => {
+        const attrs = [{ uuid: 'attr-2' }] as any;
+        const populated = { ...initialState, revocationAttributes: attrs, isFetchingRevocationAttributes: true };
+
+        const next = reducer(populated, actions.clearRevocationAttributes());
+
+        expect(next.revocationAttributes).toEqual([]);
+        expect(next.isFetchingRevocationAttributes).toBe(false);
+    });
+
+    test('getRenewAttributes drops the previous schema while fetching, then success stores the new one', () => {
+        const stale = [{ uuid: 'stale' }] as any;
+        let next = reducer(
+            { ...initialState, renewAttributes: stale },
+            actions.getRenewAttributes({ raProfileUuid: 'ra-1', authorityUuid: 'auth-1' }),
+        );
+        expect(next.isFetchingRenewAttributes).toBe(true);
+        expect(next.renewAttributes).toEqual([]);
+
+        const attrs = [{ uuid: 'renew-1' }] as any;
+        next = reducer(next, actions.getRenewAttributesSuccess({ renewAttributes: attrs }));
+        expect(next.isFetchingRenewAttributes).toBe(false);
+        expect(next.renewAttributes).toEqual(attrs);
+    });
+
+    test('getRenewAttributesFailure and clearRenewAttributes leave an empty schema', () => {
+        const attrs = [{ uuid: 'renew-1' }] as any;
+        const populated = { ...initialState, renewAttributes: attrs, isFetchingRenewAttributes: true };
+
+        const failed = reducer(populated, actions.getRenewAttributesFailure({ error: 'err' }));
+        expect(failed.renewAttributes).toEqual([]);
+        expect(failed.isFetchingRenewAttributes).toBe(false);
+
+        const cleared = reducer(populated, actions.clearRenewAttributes());
+        expect(cleared.renewAttributes).toEqual([]);
+        expect(cleared.isFetchingRenewAttributes).toBe(false);
+    });
+
+    test('getIdentifyAttributes drops the previous profile schema while fetching, then success stores the new one', () => {
+        const stale = [{ uuid: 'stale' }] as any;
+        let next = reducer(
+            { ...initialState, identifyAttributes: stale },
+            actions.getIdentifyAttributes({ raProfileUuid: 'ra-2', authorityUuid: 'auth-1' }),
+        );
+        expect(next.isFetchingIdentifyAttributes).toBe(true);
+        expect(next.identifyAttributes).toEqual([]);
+
+        const attrs = [{ uuid: 'identify-1' }] as any;
+        next = reducer(next, actions.getIdentifyAttributesSuccess({ identifyAttributes: attrs }));
+        expect(next.isFetchingIdentifyAttributes).toBe(false);
+        expect(next.identifyAttributes).toEqual(attrs);
+    });
+
+    test('getIdentifyAttributesFailure and clearIdentifyAttributes leave an empty schema', () => {
+        const attrs = [{ uuid: 'identify-1' }] as any;
+        const populated = { ...initialState, identifyAttributes: attrs, isFetchingIdentifyAttributes: true };
+
+        const failed = reducer(populated, actions.getIdentifyAttributesFailure({ error: 'err' }));
+        expect(failed.identifyAttributes).toEqual([]);
+        expect(failed.isFetchingIdentifyAttributes).toBe(false);
+
+        const cleared = reducer(populated, actions.clearIdentifyAttributes());
+        expect(cleared.identifyAttributes).toEqual([]);
+        expect(cleared.isFetchingIdentifyAttributes).toBe(false);
+    });
+
+    test('checkCompliance / success / failure update isCheckingCompliance', () => {
+        let next = reducer(initialState, actions.checkCompliance({} as any));
+        expect(next.isCheckingCompliance).toBe(true);
+
+        next = reducer(next, actions.checkComplianceSuccess());
+        expect(next.isCheckingCompliance).toBe(false);
+
+        next = reducer({ ...next, isCheckingCompliance: true }, actions.checkComplianceFailed({ error: 'err' }));
+        expect(next.isCheckingCompliance).toBe(false);
+    });
+
+    test('getCsrAttributes clears stale descriptors on fetch start, success populates, clearCsrAttributes empties', () => {
+        const seeded = { ...initialState, csrAttributeDescriptors: [{ uuid: 'stale-attr' }] as any };
+        let next = reducer(seeded, actions.getCsrAttributes({ raProfileUuid: 'ra-1' }));
+        expect(next.isFetchingCsrAttributes).toBe(true);
+        expect(next.csrAttributeDescriptors).toEqual([]);
+
+        const attrs = [{ uuid: 'csr-attr-1' }] as any;
+        next = reducer(next, actions.getCsrAttributesSuccess({ csrAttributes: attrs }));
+        expect(next.isFetchingCsrAttributes).toBe(false);
+        expect(next.csrAttributeDescriptors).toEqual(attrs);
+
+        next = reducer({ ...next, isFetchingCsrAttributes: true }, actions.getCsrAttributesFailure({ error: 'err' }));
+        expect(next.isFetchingCsrAttributes).toBe(false);
+
+        next = reducer(next, actions.clearCsrAttributes());
+        expect(next.csrAttributeDescriptors).toEqual([]);
+    });
+
+    test('getCertificateContents / success / failure update isFetchingContents', () => {
+        let next = reducer(initialState, actions.getCertificateContents({ uuids: ['cert-1'], format: 'pem' }));
+        expect(next.isFetchingContents).toBe(true);
+
+        next = reducer(next, actions.getCertificateContentsSuccess({ uuids: ['cert-1'], format: 'pem', contents: [] as any }));
+        expect(next.isFetchingContents).toBe(false);
+
+        next = reducer({ ...next, isFetchingContents: true }, actions.getCertificateContentsFailure({ error: 'err' }));
+        expect(next.isFetchingContents).toBe(false);
+    });
+
+    test('listCertificateApprovals / success / failure update approvals', () => {
+        let next = reducer(initialState, actions.listCertificateApprovals({} as any));
+        expect(next.isFetchingApprovals).toBe(true);
+
+        const approvals = [{ uuid: 'appr-1' }] as any;
+        next = reducer(next, actions.listCertificateApprovalsSuccess({ approvals }));
+        expect(next.isFetchingApprovals).toBe(false);
+        expect(next.approvals).toEqual(approvals);
+
+        next = reducer({ ...next, isFetchingApprovals: true }, actions.listCertificateApprovalsFailure({ error: 'err' }));
+        expect(next.isFetchingApprovals).toBe(false);
+    });
+
+    test('getCertificateChain / success / failure update certificateChain', () => {
+        let next = reducer(initialState, actions.getCertificateChain({ uuid: 'cert-1', withEndCertificate: true }));
+        expect(next.isFetchingCertificateChain).toBe(true);
+
+        const chain = { certificates: [{ uuid: 'cert-1' }] } as any;
+        next = reducer(next, actions.getCertificateChainSuccess({ certificateChain: chain }));
+        expect(next.isFetchingCertificateChain).toBe(false);
+        expect(next.certificateChain).toEqual(chain);
+
+        next = reducer({ ...next, isFetchingCertificateChain: true }, actions.getCertificateChainFailure({ error: 'err' }));
+        expect(next.isFetchingCertificateChain).toBe(false);
+    });
+
+    test('downloadCertificateChain / success / failure update certificateChainDownloadContent', () => {
+        let next = reducer(initialState, actions.downloadCertificateChain({} as any));
+        expect(next.isFetchingCertificateChainDownloadContent).toBe(true);
+        expect(next.certificateChainDownloadContent).toBeUndefined();
+
+        const content = { content: 'chain-data' } as any;
+        next = reducer(next, actions.downloadCertificateChainSuccess({ certificateChainDownloadContent: content }));
+        expect(next.isFetchingCertificateChainDownloadContent).toBe(false);
+        expect(next.certificateChainDownloadContent).toEqual(content);
+
+        next = reducer(
+            { ...next, isFetchingCertificateChainDownloadContent: true },
+            actions.downloadCertificateChainFailure({ error: 'err' }),
+        );
+        expect(next.isFetchingCertificateChainDownloadContent).toBe(false);
+    });
+
+    test('downloadCertificate / success / failure update certificateDownloadContent', () => {
+        let next = reducer(initialState, actions.downloadCertificate({} as any));
+        expect(next.isFetchingCertificateDownloadContent).toBe(true);
+        expect(next.certificateDownloadContent).toBeUndefined();
+
+        const content = { content: 'cert-data' } as any;
+        next = reducer(next, actions.downloadCertificateSuccess({ certificateDownloadContent: content }));
+        expect(next.isFetchingCertificateDownloadContent).toBe(false);
+        expect(next.certificateDownloadContent).toEqual(content);
+
+        next = reducer({ ...next, isFetchingCertificateDownloadContent: true }, actions.downloadCertificateFailure({ error: 'err' }));
+        expect(next.isFetchingCertificateDownloadContent).toBe(false);
+        expect(next.certificateDownloadContent).toBeUndefined();
+    });
+
+    test('importCertificates / success / failure update isImporting and importResults', () => {
+        const staleResults = [{ entryReference: 'a'.repeat(64), kind: 'certificate', imported: true }] as any;
+        let next = reducer(
+            { ...initialState, importResults: staleResults },
+            actions.importCertificates({ certificateImportRequestDto: { file: 'ZmlsZQ==', entries: [] } as any }),
+        );
+        expect(next.isImporting).toBe(true);
+        expect(next.importResults).toBeUndefined();
+
+        const results = [{ entryReference: 'a'.repeat(64), kind: 'certificate', imported: true, certificateUuid: 'cert-1' }] as any;
+        next = reducer(next, actions.importCertificatesSuccess({ results }));
+        expect(next.isImporting).toBe(false);
+        expect(next.importResults).toEqual(results);
+
+        next = reducer({ ...next, isImporting: true }, actions.importCertificatesFailure({ error: 'err' }));
+        expect(next.isImporting).toBe(false);
+        expect(next.importResults).toEqual(results);
+    });
+
+    test('downloadKeystore / success / failure update isDownloadingKeystore, the success flag and the error', () => {
+        const downloadKeystore = actions.downloadKeystore({
+            uuid: 'cert-1',
+            certificateKeystoreRequestDto: { passphrase: 'a-very-long-passphrase' } as any,
+            fallbackName: 'fallback.p12',
+        });
+
+        let next = reducer({ ...initialState, downloadKeystoreSucceeded: true, downloadKeystoreError: 'earlier' }, downloadKeystore);
+        expect(next.isDownloadingKeystore).toBe(true);
+        expect(next.downloadKeystoreSucceeded).toBe(false);
+        expect(next.downloadKeystoreError).toBeUndefined();
+
+        next = reducer(next, actions.downloadKeystoreSuccess());
+        expect(next.isDownloadingKeystore).toBe(false);
+        expect(next.downloadKeystoreSucceeded).toBe(true);
+
+        next = reducer(reducer(next, downloadKeystore), actions.downloadKeystoreFailure({ error: 'err' }));
+        expect(next.isDownloadingKeystore).toBe(false);
+        expect(next.downloadKeystoreSucceeded).toBe(false);
+        expect(next.downloadKeystoreError).toBe('err');
+    });
+
+    test('archiveCertificate / success / failure update archive flags and archived field', () => {
+        let next = reducer(initialState, actions.archiveCertificate({ uuid: 'cert-1' }));
+        expect(next.isArchiving).toBe(true);
+
+        const stateWithCerts = {
+            ...initialState,
+            isArchiving: true,
+            certificates: [{ uuid: 'cert-1', archived: false }] as any,
+            certificateDetail: { uuid: 'cert-1', archived: false } as any,
+        };
+        next = reducer(stateWithCerts, actions.archiveCertificateSuccess({ uuid: 'cert-1' }));
+        expect(next.isArchiving).toBe(false);
+        expect(next.certificates[0].archived).toBe(true);
+        expect(next.certificateDetail?.archived).toBe(true);
+
+        next = reducer({ ...next, isArchiving: true }, actions.archiveCertificateFailure({ error: 'err' }));
+        expect(next.isArchiving).toBe(false);
+    });
+
+    test('unarchiveCertificate / success / failure update archive flags and archived field', () => {
+        let next = reducer(initialState, actions.unarchiveCertificate({ uuid: 'cert-1' }));
+        expect(next.isArchiving).toBe(true);
+
+        const stateWithCerts = {
+            ...initialState,
+            isArchiving: true,
+            certificates: [{ uuid: 'cert-1', archived: true }] as any,
+            certificateDetail: { uuid: 'cert-1', archived: true } as any,
+        };
+        next = reducer(stateWithCerts, actions.unarchiveCertificateSuccess({ uuid: 'cert-1' }));
+        expect(next.isArchiving).toBe(false);
+        expect(next.certificates[0].archived).toBe(false);
+        expect(next.certificateDetail?.archived).toBe(false);
+
+        next = reducer({ ...next, isArchiving: true }, actions.unarchiveCertificateFailure({ error: 'err' }));
+        expect(next.isArchiving).toBe(false);
+    });
+
+    test('bulkArchiveCertificate / success / failure update isBulkArchiving', () => {
+        let next = reducer(initialState, actions.bulkArchiveCertificate({ uuids: ['cert-1'], filters: undefined }));
+        expect(next.isBulkArchiving).toBe(true);
+
+        next = reducer(next, actions.bulkArchiveCertificateSuccess({ uuids: ['cert-1'] }));
+        expect(next.isBulkArchiving).toBe(false);
+
+        next = reducer({ ...next, isBulkArchiving: true }, actions.bulkArchiveCertificateFailure({ error: 'err' }));
+        expect(next.isBulkArchiving).toBe(false);
+    });
+
+    test('bulkUnarchiveCertificate / success / failure update isBulkUnarchiving', () => {
+        let next = reducer(initialState, actions.bulkUnarchiveCertificate({ uuids: ['cert-1'], filters: undefined }));
+        expect(next.isBulkUnarchiving).toBe(true);
+
+        next = reducer(next, actions.bulkUnarchiveCertificateSuccess({ uuids: ['cert-1'] }));
+        expect(next.isBulkUnarchiving).toBe(false);
+
+        next = reducer({ ...next, isBulkUnarchiving: true }, actions.bulkUnarchiveCertificateFailure({ error: 'err' }));
+        expect(next.isBulkUnarchiving).toBe(false);
+    });
+
+    test('manuallyIssueCertificate / success / failure manage finalizingIssueCertificateUuids', () => {
+        const initial = reducer(undefined, { type: 'noop' });
+        let next = reducer(
+            initial,
+            actions.manuallyIssueCertificate({
+                authorityUuid: 'auth-1',
+                raProfileUuid: 'ra-1',
+                uuid: 'cert-1',
+                uploadRequest: { certificate: 'BASE64', customAttributes: [] } as any,
+            }),
+        );
+        expect(next.finalizingIssueCertificateUuids).toEqual(['cert-1']);
+
+        const successDetail = { uuid: 'cert-1', state: 'issued' } as any;
+        next = reducer(next, actions.manuallyIssueCertificateSuccess({ uuid: 'cert-1', certificate: successDetail }));
+        expect(next.finalizingIssueCertificateUuids).toEqual([]);
+        // No state transition is encoded here; getCertificateDetail in the epic owns truth.
+        expect(next.certificateDetail).toBeUndefined();
+
+        // Concurrent in-flight: dispatching for cert-2 keeps cert-1's slot if still in flight
+        let two = reducer(
+            initial,
+            actions.manuallyIssueCertificate({ authorityUuid: 'a', raProfileUuid: 'r', uuid: 'cert-1', uploadRequest: {} as any }),
+        );
+        two = reducer(
+            two,
+            actions.manuallyIssueCertificate({ authorityUuid: 'a', raProfileUuid: 'r', uuid: 'cert-2', uploadRequest: {} as any }),
+        );
+        expect([...two.finalizingIssueCertificateUuids].sort((a, b) => a.localeCompare(b))).toEqual(['cert-1', 'cert-2']);
+        two = reducer(two, actions.manuallyIssueCertificateFailure({ uuid: 'cert-1', error: 'boom' }));
+        expect(two.finalizingIssueCertificateUuids).toEqual(['cert-2']);
+    });
+
+    test('manuallyConfirmRevoke / success / failure manage confirmingRevokeCertificateUuids without hardcoding cert state', () => {
+        const initial = reducer(undefined, { type: 'noop' });
+        let next = reducer(initial, actions.manuallyConfirmRevoke({ authorityUuid: 'a', raProfileUuid: 'r', uuid: 'cert-1' }));
+        expect(next.confirmingRevokeCertificateUuids).toEqual(['cert-1']);
+
+        next = reducer(next, actions.manuallyConfirmRevokeSuccess({ uuid: 'cert-1' }));
+        expect(next.confirmingRevokeCertificateUuids).toEqual([]);
+        // No state transition is encoded here; getCertificateDetail in the epic owns truth.
+        expect(next.certificateDetail).toBeUndefined();
+
+        next = reducer(
+            reducer(initial, actions.manuallyConfirmRevoke({ authorityUuid: 'a', raProfileUuid: 'r', uuid: 'cert-2' })),
+            actions.manuallyConfirmRevokeFailure({ uuid: 'cert-2', error: 'nope' }),
+        );
+        expect(next.confirmingRevokeCertificateUuids).toEqual([]);
+    });
+
+    test('cancelPendingCertificateOperation / success / failure manage cancelingPendingCertificateUuids without hardcoding cert state', () => {
+        const initial = reducer(undefined, { type: 'noop' });
+        let next = reducer(
+            initial,
+            actions.cancelPendingCertificateOperation({
+                authorityUuid: 'a',
+                raProfileUuid: 'r',
+                uuid: 'cert-1',
+                reason: 'no-longer-needed',
+            }),
+        );
+        expect(next.cancelingPendingCertificateUuids).toEqual(['cert-1']);
+
+        const successDetail = { uuid: 'cert-1', state: 'failed' } as any;
+        next = reducer(next, actions.cancelPendingCertificateOperationSuccess({ uuid: 'cert-1', certificate: successDetail }));
+        expect(next.cancelingPendingCertificateUuids).toEqual([]);
+        // No state transition is encoded here; getCertificateDetail in the epic owns truth.
+        expect(next.certificateDetail).toBeUndefined();
+
+        next = reducer(
+            reducer(
+                initial,
+                actions.cancelPendingCertificateOperation({ authorityUuid: 'a', raProfileUuid: 'r', uuid: 'cert-2', reason: undefined }),
+            ),
+            actions.cancelPendingCertificateOperationFailure({ uuid: 'cert-2', error: 'oops' }),
+        );
+        expect(next.cancelingPendingCertificateUuids).toEqual([]);
+    });
+
+    test('initialState contains empty per-UUID arrays for the three pending-operation actions', () => {
+        const next = reducer(undefined, { type: 'noop' });
+        expect(next.finalizingIssueCertificateUuids).toEqual([]);
+        expect(next.confirmingRevokeCertificateUuids).toEqual([]);
+        expect(next.cancelingPendingCertificateUuids).toEqual([]);
+    });
+
+    test('registerCertificate / success / failure update isRegistering', () => {
+        let next = reducer(
+            initialState,
+            actions.registerCertificate({ authorityUuid: 'a', raProfileUuid: 'r', registerRequest: { attributes: [] } as any }),
+        );
+        expect(next.isRegistering).toBe(true);
+
+        next = reducer(next, actions.registerCertificateSuccess({ uuid: 'new-uuid' }));
+        expect(next.isRegistering).toBe(false);
+
+        next = reducer({ ...next, isRegistering: true }, actions.registerCertificateFailure({ error: 'err', validationErrors: ['e1'] }));
+        expect(next.isRegistering).toBe(false);
+        expect(next.issueValidationErrors).toEqual(['e1']);
+    });
+
+    test('registerCertificateFailure keeps the error message; a new attempt and clearRegisterErrors drop it', () => {
+        const registerAction = actions.registerCertificate({ authorityUuid: 'a', raProfileUuid: 'r', registerRequest: {} });
+
+        const failed = reducer(initialState, actions.registerCertificateFailure({ error: 'source is archived' }));
+        expect(selectors.registerErrorMessage({ certificates: failed } as any)).toBe('source is archived');
+
+        expect(reducer(failed, registerAction).registerErrorMessage).toBeUndefined();
+        expect(reducer(failed, actions.clearRegisterErrors()).registerErrorMessage).toBeUndefined();
+    });
+
+    test('completeRegisteredCertificate sets isIssuing, clears stale validation errors, and reuses issueCertificateSuccess/Failure', () => {
+        let next = reducer(
+            { ...initialState, issueValidationErrors: ['stale'] },
+            actions.completeRegisteredCertificate({
+                authorityUuid: 'a',
+                raProfileUuid: 'r',
+                certificateUuid: 'cert-1',
+                request: 'BASE64CSR',
+                format: 'PKCS10' as any,
+                authorizationSecret: 'secret',
+            }),
+        );
+        expect(next.isIssuing).toBe(true);
+        expect(next.issueValidationErrors).toBeUndefined();
+
+        next = reducer(next, actions.issueCertificateSuccess({ uuid: 'cert-1' }));
+        expect(next.isIssuing).toBe(false);
+    });
+});
+
+describe('certificates selectors', () => {
+    const featureState = {
+        ...initialState,
+        deleteErrorMessage: 'del error',
+        certificates: [{ uuid: 'cert-1' }] as any,
+        certificateDetail: { uuid: 'cert-1' } as any,
+        certificateRelations: { uuid: 'cert-1' } as any,
+        certificateHistory: [{ uuid: 'h-1' }] as any,
+        certificateLocations: [{ uuid: 'loc-1' }] as any,
+        certificateChain: { certificates: [] } as any,
+        certificateChainDownloadContent: { content: 'chain' } as any,
+        certificateDownloadContent: { content: 'cert' } as any,
+        importResults: [{ entryReference: 'a'.repeat(64) }] as any,
+        issuanceAttributes: { 'ra-1': [{ uuid: 'attr-1' }] } as any,
+        revocationAttributes: [{ uuid: 'attr-2' }] as any,
+        approvals: [{ uuid: 'appr-1' }] as any,
+        validationResult: { status: 'valid' } as any,
+        csrAttributeDescriptors: [{ uuid: 'csr-1' }] as any,
+        isFetchingDetail: true,
+        isFetchingRelations: true,
+        isAssociating: true,
+        isDeassociating: true,
+        isFetchingHistory: true,
+        isFetchingLocations: true,
+        isFetchingApprovals: true,
+        isFetchingCertificateChain: true,
+        isFetchingCertificateDownloadContent: true,
+        isFetchingCertificateChainDownloadContent: true,
+        isImporting: true,
+        isDownloadingKeystore: true,
+        downloadKeystoreSucceeded: true,
+        downloadKeystoreError: 'refused',
+        isFetchingValidationResult: true,
+        isIssuing: true,
+        isRevoking: true,
+        isRenewing: true,
+        isRekeying: true,
+        isDeleting: true,
+        isBulkDeleting: true,
+        isUpdatingGroup: true,
+        isUpdatingRaProfile: true,
+        isUpdatingOwner: true,
+        isUpdatingTrustedStatus: true,
+        isBulkUpdatingGroup: true,
+        isBulkUpdatingRaProfile: true,
+        isBulkUpdatingOwner: true,
+        isUploading: true,
+        isFetchingIssuanceAttributes: true,
+        isFetchingRevocationAttributes: true,
+        isFetchingCsrAttributes: true,
+        isFetchingContents: true,
+        isIncludeArchived: true,
+        isArchiving: true,
+        isBulkArchiving: true,
+        isBulkUnarchiving: true,
+    };
+    const state = { certificates: featureState } as any;
+
+    test('selectors return correct values from state', () => {
+        expect(selectors.deleteErrorMessage(state)).toBe('del error');
+        expect(selectors.certificates(state)).toEqual([{ uuid: 'cert-1' }]);
+        expect(selectors.certificateDetail(state)).toEqual({ uuid: 'cert-1' });
+        expect(selectors.certificateRelations(state)).toEqual({ uuid: 'cert-1' });
+        expect(selectors.certificateHistory(state)).toEqual([{ uuid: 'h-1' }]);
+        expect(selectors.certificateLocations(state)).toEqual([{ uuid: 'loc-1' }]);
+        expect(selectors.certificateChain(state)).toEqual({ certificates: [] });
+        expect(selectors.certificateChainDownloadContent(state)).toEqual({ content: 'chain' });
+        expect(selectors.certificateDownloadContent(state)).toEqual({ content: 'cert' });
+        expect(selectors.importResults(state)).toEqual([{ entryReference: 'a'.repeat(64) }]);
+        expect(selectors.issuanceAttributes(state)).toEqual({ 'ra-1': [{ uuid: 'attr-1' }] });
+        expect(selectors.revocationAttributes(state)).toEqual([{ uuid: 'attr-2' }]);
+        expect(selectors.approvals(state)).toEqual([{ uuid: 'appr-1' }]);
+        expect(selectors.validationResult(state)).toEqual({ status: 'valid' });
+        expect(selectors.csrAttributeDescriptors(state)).toEqual([{ uuid: 'csr-1' }]);
+    });
+
+    test('boolean selectors return correct flags from state', () => {
+        expect(selectors.isFetchingDetail(state)).toBe(true);
+        expect(selectors.isFetchingRelations(state)).toBe(true);
+        expect(selectors.isAssociating(state)).toBe(true);
+        expect(selectors.isDeassociating(state)).toBe(true);
+        expect(selectors.isFetchingHistory(state)).toBe(true);
+        expect(selectors.isFetchingLocations(state)).toBe(true);
+        expect(selectors.isFetchingApprovals(state)).toBe(true);
+        expect(selectors.isFetchingCertificateChain(state)).toBe(true);
+        expect(selectors.isFetchingCertificateDownloadContent(state)).toBe(true);
+        expect(selectors.isFetchingCertificateChainDownloadContent(state)).toBe(true);
+        expect(selectors.isImporting(state)).toBe(true);
+        expect(selectors.isDownloadingKeystore(state)).toBe(true);
+        expect(selectors.downloadKeystoreSucceeded(state)).toBe(true);
+        expect(selectors.downloadKeystoreError(state)).toBe('refused');
+        expect(selectors.isFetchingValidationResult(state)).toBe(true);
+        expect(selectors.isIssuing(state)).toBe(true);
+        expect(selectors.isRevoking(state)).toBe(true);
+        expect(selectors.isRenewing(state)).toBe(true);
+        expect(selectors.isRekeying(state)).toBe(true);
+        expect(selectors.isDeleting(state)).toBe(true);
+        expect(selectors.isBulkDeleting(state)).toBe(true);
+        expect(selectors.isUpdatingGroup(state)).toBe(true);
+        expect(selectors.isUpdatingRaProfile(state)).toBe(true);
+        expect(selectors.isUpdatingOwner(state)).toBe(true);
+        expect(selectors.isUpdatingTrustedStatus(state)).toBe(true);
+        expect(selectors.isBulkUpdatingGroup(state)).toBe(true);
+        expect(selectors.isBulkUpdatingRaProfile(state)).toBe(true);
+        expect(selectors.isBulkUpdatingOwner(state)).toBe(true);
+        expect(selectors.isUploading(state)).toBe(true);
+        expect(selectors.isFetchingIssuanceAttributes(state)).toBe(true);
+        expect(selectors.isFetchingRevocationAttributes(state)).toBe(true);
+        expect(selectors.isFetchingCsrAttributes(state)).toBe(true);
+        expect(selectors.isFetchingContents(state)).toBe(true);
+        expect(selectors.isIncludeArchived(state)).toBe(true);
+        expect(selectors.isArchiving(state)).toBe(true);
+    });
+});

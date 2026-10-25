@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: "{{ include "fe-administrator.fullname" . }}-test-connection"
+  labels:
+    {{- include "fe-administrator.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": test
+spec:
+  containers:
+    - name: curl
+      image: {{ include "fe-administrator.curl.image" . }}
+      command:
+        - /bin/sh
+        - -c
+        - |
+          curl --silent --retry 5 --retry-delay 5 --retry-all-errors fe-administrator-service:{{ .Values.service.port }}/index.html
+  restartPolicy: Never

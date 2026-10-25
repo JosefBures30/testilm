@@ -1,0 +1,405 @@
+import type { Page } from '@playwright/test';
+import { testInitialState } from 'ducks/test-reducers';
+import type { AttributeDescriptorModel } from 'types/attributes';
+import type { CertificateDetailResponseModel, CertificateRegistrationRequestModel } from 'types/certificate';
+import { AttributeContentType, AttributeType, CertificateRegistrationState } from 'types/openapi';
+import { expect, test } from '../../../../../playwright/ct-test';
+import { CertificateRekeyDialogTestWrapper } from './CertificateRekeyDialogTestWrapper';
+
+const renewDescriptor: AttributeDescriptorModel = {
+    type: AttributeType.Data,
+    name: 'renewField',
+    uuid: 'renew-data-uuid-1',
+    contentType: AttributeContentType.String,
+    properties: { label: 'Renew Field', required: false, readOnly: false, visible: true, list: false, multiSelect: false },
+} as AttributeDescriptorModel;
+
+const withRenewSchema = { certificates: { ...testInitialState.certificates, renewAttributes: [renewDescriptor] } };
+
+const signatureDescriptor: AttributeDescriptorModel = {
+    type: AttributeType.Data,
+    name: 'signatureField',
+    uuid: 'signature-data-uuid-1',
+    contentType: AttributeContentType.String,
+    properties: { label: 'Signature Field', required: true, readOnly: false, visible: true, list: false, multiSelect: false },
+} as AttributeDescriptorModel;
+
+const withRenewAndSignatureSchemas = {
+    ...withRenewSchema,
+    tokenprofiles: { tokenProfiles: [{ uuid: 'token-profile-uuid', name: 'Token Profile' }] },
+    cryptographicKeys: {
+        cryptographicKeyPairs: [
+            { uuid: 'new-key-uuid', name: 'New Key', tokenProfileUuid: 'token-profile-uuid', tokenInstanceUuid: 'token-uuid', items: [] },
+        ],
+        altCryptographicKeyPairs: [],
+    },
+    cryptographicOperations: { signatureAttributeDescriptors: [signatureDescriptor], altSignatureAttributeDescriptors: [] },
+};
+
+const dispatched = async (page: Page): Promise<{ type: string; payload?: unknown }[]> =>
+    JSON.parse((await page.getByTestId('dispatched').textContent()) ?? '[]');
+
+const chooseExternalCsr = async (page: Page) => {
+    await page.getByTestId('select-uploadCsr-trigger').click();
+    await page.getByRole('option', { name: 'External' }).click();
+    await page.locator('textarea').fill('csr-content');
+};
+
+const chooseNewKey = async (page: Page) => {
+    await page.getByTestId('select-uploadCsr-trigger').click();
+    await page.getByRole('option', { name: 'Existing Key' }).click();
+    await page.getByTestId('select-tokenProfile-trigger').click();
+    await page.getByRole('option', { name: 'Token Profile' }).click();
+    await page.getByTestId('select-keySelect-trigger').click();
+    await page.getByRole('option', { name: 'New Key' }).click();
+};
+
+test.describe('CertificateRekeyDialog', () => {
+    test('asks for the renew schema, since a rekey is a renew at the authority', async ({ mount, page }) => {
+        await mount(<CertificateRekeyDialogTestWrapper />);
+
+        await expect
+            .poll(() => dispatched(page))
+            .toContainEqual({
+                type: 'certificates/getRenewAttributes',
+                payload: { raProfileUuid: 'ra-profile-uuid', authorityUuid: 'authority-uuid' },
+            });
+        await expect(page.getByText('Renew Attributes')).toHaveCount(0);
+    });
+
+    test('renders the renew schema and sends the entered values on the rekey request', async ({ mount, page }) => {
+        await mount(<CertificateRekeyDialogTestWrapper preloadedState={withRenewSchema} />);
+
+        await expect(page.getByText('Renew Attributes')).toBeVisible();
+        await chooseExternalCsr(page);
+        const field = page.getByTestId('text-input-__attributes__renew__.renewField');
+        await field.click();
+        await field.fill('renew-value');
+        await page.getByTestId('progress-button').click();
+
+        await expect.poll(async () => (await dispatched(page)).some((a) => a.type === 'certificates/rekeyCertificate')).toBe(true);
+        const rekey = (await dispatched(page)).find((a) => a.type === 'certificates/rekeyCertificate');
+        expect(rekey?.payload).toMatchObject({
+            uuid: 'certificate-uuid',
+            raProfileUuid: 'ra-profile-uuid',
+            authorityUuid: 'authority-uuid',
+            rekey: { attributes: [{ name: 'renewField', uuid: 'renew-data-uuid-1', content: [{ data: 'renew-value' }] }] },
+        });
+    });
+
+    test('a required signature attribute behind the renew tab blocks the rekey until it is filled', async ({ mount, page }) => {
+        await mount(<CertificateRekeyDialogTestWrapper preloadedState={withRenewAndSignatureSchemas} />);
+
+        await chooseNewKey(page);
+        await expect(page.getByRole('tab', { name: 'Signature Attributes' })).toBeVisible();
+        await expect(page.getByTestId('progress-button')).toBeDisabled();
+
+        await page.getByRole('tab', { name: 'Signature Attributes' }).click();
+        const field = page.getByTestId('text-input-__attributes__signatureAttributes__.signatureField');
+        await field.click();
+        await field.fill('signature-value');
+        await expect(page.getByTestId('progress-button')).toBeEnabled();
+    });
+
+    test('an empty schema rekeys with no attributes', async ({ mount, page }) => {
+        await mount(<CertificateRekeyDialogTestWrapper />);
+
+        await chooseExternalCsr(page);
+        await page.getByTestId('progress-button').click();
+
+        await expect.poll(async () => (await dispatched(page)).some((a) => a.type === 'certificates/rekeyCertificate')).toBe(true);
+        const rekey = (await dispatched(page)).find((a) => a.type === 'certificates/rekeyCertificate');
+        expect(rekey?.payload).toMatchObject({ rekey: { attributes: [] } });
+    });
+});
+
+const rekeyRequest = async (page: Page) =>
+    (await dispatched(page)).find((a) => a.type === 'certificates/rekeyCertificate') as
+        | { type: string; payload?: { rekey?: { authorizationSecret?: string } } }
+        | undefined;
+
+test.describe('CertificateRekeyDialog — challenge', () => {
+    test('a certificate without a registration rekeys with no challenge input', async ({ mount, page }) => {
+        await mount(<CertificateRekeyDialogTestWrapper />);
+
+        await expect(page.locator('#rekeyAuthorizationSecret')).toHaveCount(0);
+        await chooseExternalCsr(page);
+        await page.getByTestId('progress-button').click();
+
+        await expect.poll(() => rekeyRequest(page)).toBeTruthy();
+        expect((await rekeyRequest(page))?.payload?.rekey?.authorizationSecret).toBeUndefined();
+    });
+
+    test('a Locked registration asks for no challenge and leaves Core to refuse', async ({ mount, page }) => {
+        await mount(<CertificateRekeyDialogTestWrapper registrationState={CertificateRegistrationState.Locked} />);
+
+        await expect(page.locator('#rekeyAuthorizationSecret')).toHaveCount(0);
+        await chooseExternalCsr(page);
+        await expect(page.getByTestId('progress-button')).toBeEnabled();
+    });
+
+    test('an Active registration requires the challenge and sends it as authorizationSecret', async ({ mount, page }) => {
+        await mount(<CertificateRekeyDialogTestWrapper registrationState={CertificateRegistrationState.Active} />);
+
+        await expect(page.locator('#rekeyAuthorizationSecret')).toHaveAttribute('type', 'password');
+        await chooseExternalCsr(page);
+        await expect(page.getByTestId('progress-button')).toBeDisabled();
+
+        await page.locator('#rekeyAuthorizationSecret').fill('holder-challenge');
+        await page.getByTestId('progress-button').click();
+
+        await expect.poll(() => rekeyRequest(page)).toBeTruthy();
+        expect((await rekeyRequest(page))?.payload?.rekey?.authorizationSecret).toBe('holder-challenge');
+    });
+
+    test('a failed rekey keeps the dialog open with the Core message inline', async ({ mount, page }) => {
+        await mount(<CertificateRekeyDialogTestWrapper registrationState={CertificateRegistrationState.Active} />);
+
+        await chooseExternalCsr(page);
+        await page.locator('#rekeyAuthorizationSecret').fill('wrong-challenge');
+        await page.getByTestId('progress-button').click();
+        await expect.poll(() => rekeyRequest(page)).toBeTruthy();
+        await page.getByTestId('simulate-rekey-failure').click();
+
+        await expect(page.getByTestId('rekeyDialogError')).toContainText('locked after too many failed attempts');
+        await expect(page.getByTestId('rekeyDialogError').locator('li')).toHaveCSS('white-space', 'pre-line');
+        await expect(page.getByTestId('dialog-closed')).toHaveCount(0);
+    });
+
+    test('cannot be cancelled while a rekey is in flight', async ({ mount, page }) => {
+        await mount(<CertificateRekeyDialogTestWrapper />);
+
+        await chooseExternalCsr(page);
+        await page.getByTestId('progress-button').click();
+        await expect.poll(() => rekeyRequest(page)).toBeTruthy();
+
+        await expect(page.getByRole('button', { name: 'Cancel' })).toBeDisabled();
+    });
+
+    test('a confirmed rekey closes the dialog', async ({ mount, page }) => {
+        await mount(<CertificateRekeyDialogTestWrapper />);
+
+        await chooseExternalCsr(page);
+        await page.getByTestId('progress-button').click();
+        await expect.poll(() => rekeyRequest(page)).toBeTruthy();
+        await page.getByTestId('simulate-rekey-success').click();
+
+        await expect(page.getByTestId('dialog-closed')).toBeAttached();
+    });
+
+    test('clears a stale error when it opens', async ({ mount, page }) => {
+        await mount(
+            <CertificateRekeyDialogTestWrapper
+                preloadedState={{ certificates: { ...testInitialState.certificates, rekeyErrorMessage: 'stale' } }}
+            />,
+        );
+
+        await expect(page.getByTestId('rekeyDialogError')).toHaveCount(0);
+    });
+});
+
+const switchToRegister = async (page: Page) => {
+    await page.getByText('Register instead of rekeying now').click();
+};
+
+test.describe('CertificateRekeyDialog — Register switch', () => {
+    test('replaces the key source with the identity of the source', async ({ mount, page }) => {
+        await mount(<CertificateRekeyDialogTestWrapper registrationState={CertificateRegistrationState.Active} />);
+        await switchToRegister(page);
+
+        await expect(page.getByTestId('select-uploadCsr-trigger')).toHaveCount(0);
+        await expect(page.locator('#rekeyAuthorizationSecret')).toHaveCount(0);
+        await expect(page.getByTestId('successorIdentity')).toContainText('CN=test-certificate');
+        await expect(page.getByTestId('progress-button')).toHaveText('Register');
+    });
+
+    test('stages a successor of the rekeyed certificate and sends no rekey', async ({ mount, page }) => {
+        const registrations: CertificateRegistrationRequestModel[] = [];
+        await mount(<CertificateRekeyDialogTestWrapper onRegister={(request) => registrations.push(request)} />);
+        await switchToRegister(page);
+        await page.getByTestId('progress-button').click();
+
+        await expect.poll(() => registrations).toHaveLength(1);
+        expect(registrations[0]).toMatchObject({
+            sourceCertificateUuid: 'certificate-uuid',
+            subjectDn: 'CN=test-certificate',
+            subjectAltName: 'DNS:test.example',
+        });
+        expect(registrations[0].authorizationSecret).toBeUndefined();
+        expect(await rekeyRequest(page)).toBeUndefined();
+    });
+
+    test('asks for the connector attributes of the RA profile', async ({ mount, page }) => {
+        await mount(<CertificateRekeyDialogTestWrapper />);
+        await switchToRegister(page);
+
+        const registerAttributesRequest = async () =>
+            (await dispatched(page)).find((action) => action.type === 'certificates/getRegisterAttributes')?.payload;
+        await expect.poll(registerAttributesRequest).toEqual({ raProfileUuid: 'ra-profile-uuid', authorityUuid: 'authority-uuid' });
+        expect(await registerAttributesRequest()).toEqual({ raProfileUuid: 'ra-profile-uuid', authorityUuid: 'authority-uuid' });
+    });
+
+    test('an Active source requires a challenge for the successor and sends it', async ({ mount, page }) => {
+        const registrations: CertificateRegistrationRequestModel[] = [];
+        await mount(
+            <CertificateRekeyDialogTestWrapper
+                registrationState={CertificateRegistrationState.Active}
+                onRegister={(request) => registrations.push(request)}
+            />,
+        );
+        await switchToRegister(page);
+
+        await expect(page.getByTestId('progress-button')).toBeDisabled();
+        await page.locator('#successorAuthorizationSecret').fill('successor-challenge');
+        await page.getByTestId('progress-button').click();
+
+        await expect.poll(() => registrations).toHaveLength(1);
+        expect(registrations[0].authorizationSecret).toBe('successor-challenge');
+    });
+
+    test('an unfinished key choice left behind does not hold the registration back', async ({ mount, page }) => {
+        const registrations: CertificateRegistrationRequestModel[] = [];
+        await mount(<CertificateRekeyDialogTestWrapper onRegister={(request) => registrations.push(request)} />);
+        await page.getByTestId('select-uploadCsr-trigger').click();
+        await page.getByRole('option', { name: 'Existing Key' }).click();
+        await expect(page.getByTestId('select-tokenProfile-trigger')).toBeVisible();
+
+        await switchToRegister(page);
+        await page.getByTestId('progress-button').click();
+
+        await expect.poll(() => registrations).toHaveLength(1);
+    });
+
+    test('a required connector attribute left empty keeps the dialog open and stages nothing', async ({ mount, page }) => {
+        const registrations: CertificateRegistrationRequestModel[] = [];
+        const requiredRegisterDescriptor = {
+            ...renewDescriptor,
+            name: 'registerField',
+            uuid: 'register-data-uuid-1',
+            properties: { ...renewDescriptor.properties, label: 'Register Field', required: true },
+        } as AttributeDescriptorModel;
+        await mount(
+            <CertificateRekeyDialogTestWrapper
+                preloadedState={{
+                    certificates: {
+                        ...testInitialState.certificates,
+                        registerAttributes: { 'ra-profile-uuid': [requiredRegisterDescriptor] },
+                    },
+                }}
+                onRegister={(request) => registrations.push(request)}
+            />,
+        );
+        await switchToRegister(page);
+        await page.getByTestId('progress-button').click();
+
+        await expect(page.getByText('Required Field')).toBeVisible();
+        expect(registrations).toHaveLength(0);
+        await expect(page.getByTestId('dialog-closed')).toHaveCount(0);
+    });
+
+    test('a past issuance window is named as the reason Register is disabled', async ({ mount, page }) => {
+        await mount(<CertificateRekeyDialogTestWrapper />);
+        await switchToRegister(page);
+
+        await page.locator('#successorAuthorizationSecret').fill('successor-challenge');
+        await page.locator('#successorExpiresAt').dispatchEvent('click');
+        await page.getByRole('button', { name: 'Previous' }).click();
+        await page.getByRole('button', { name: '15', exact: true }).click();
+
+        await expect(page.getByText('Issuance window must be a future date')).toBeVisible();
+        await expect(page.getByTestId('progress-button')).toBeDisabled();
+    });
+
+    test('a field added by a connector callback does not survive a trip through Register', async ({ mount, page }) => {
+        await mount(<CertificateRekeyDialogTestWrapper preloadedState={withRenewAndSignatureSchemas} />);
+        await chooseNewKey(page);
+        await page.getByRole('tab', { name: 'Signature Attributes' }).click();
+        await page.getByTestId('simulate-signature-callback').click();
+        await expect(page.getByTestId('text-input-__attributes__signatureAttributes__.callbackField')).toBeVisible();
+
+        await switchToRegister(page);
+        await switchToRegister(page);
+        await chooseNewKey(page);
+        await page.getByRole('tab', { name: 'Signature Attributes' }).click();
+        const field = page.getByTestId('text-input-__attributes__signatureAttributes__.signatureField');
+        await field.click();
+        await field.fill('signature-value');
+
+        await expect(page.getByTestId('text-input-__attributes__signatureAttributes__.callbackField')).toHaveCount(0);
+        await expect(page.getByTestId('progress-button')).toBeEnabled();
+    });
+
+    test('switching back to rekey reloads the keys of the restored token profile', async ({ mount, page }) => {
+        const certificate = {
+            uuid: 'certificate-uuid',
+            commonName: 'test-certificate',
+            subjectAlternativeNames: { dNSName: ['test.example'] },
+            raProfile: { uuid: 'ra-profile-uuid', name: 'Test RA Profile', authorityInstanceUuid: 'authority-uuid' },
+            key: { uuid: 'current-key-uuid', name: 'Current Key', tokenProfileUuid: 'current-token-profile-uuid' },
+        } as unknown as CertificateDetailResponseModel;
+        await mount(
+            <CertificateRekeyDialogTestWrapper
+                certificate={certificate}
+                preloadedState={{
+                    ...withRenewAndSignatureSchemas,
+                    tokenprofiles: {
+                        tokenProfiles: [
+                            { uuid: 'current-token-profile-uuid', name: 'Current Profile' },
+                            { uuid: 'token-profile-uuid', name: 'Token Profile' },
+                        ],
+                    },
+                }}
+            />,
+        );
+        await chooseNewKey(page);
+
+        await switchToRegister(page);
+        await switchToRegister(page);
+
+        const lastKeyPairsRequest = async () =>
+            (await dispatched(page)).findLast((a) => a.type === 'cryptographicKeys/listCryptographicKeyPairs')?.payload;
+        await expect.poll(lastKeyPairsRequest).toEqual({ tokenProfileUuid: 'current-token-profile-uuid', store: 'normal' });
+        expect(await lastKeyPairsRequest()).toEqual({ tokenProfileUuid: 'current-token-profile-uuid', store: 'normal' });
+    });
+
+    test('switching back to rekey clears the registration error and restores the key source', async ({ mount, page }) => {
+        await mount(<CertificateRekeyDialogTestWrapper />);
+        await switchToRegister(page);
+        await page.getByTestId('progress-button').click();
+        await page.getByTestId('simulate-register-failure').click();
+        await expect(page.getByTestId('rekeyDialogError')).toBeVisible();
+
+        await switchToRegister(page);
+
+        await expect(page.getByTestId('rekeyDialogError')).toHaveCount(0);
+        await expect(page.getByTestId('select-uploadCsr-trigger')).toBeVisible();
+        await expect(page.getByTestId('progress-button')).toHaveText('Rekey');
+    });
+
+    test('cannot be cancelled while a registration is in flight', async ({ mount, page }) => {
+        await mount(<CertificateRekeyDialogTestWrapper />);
+        await switchToRegister(page);
+        await page.getByTestId('progress-button').click();
+
+        await expect(page.getByRole('button', { name: 'Cancel' })).toBeDisabled();
+    });
+
+    test('a failed registration keeps the dialog open with the Core message inline', async ({ mount, page }) => {
+        await mount(<CertificateRekeyDialogTestWrapper />);
+        await switchToRegister(page);
+        await page.getByTestId('progress-button').click();
+        await page.getByTestId('simulate-register-failure').click();
+
+        await expect(page.getByTestId('rekeyDialogError')).toContainText('Cannot register a successor of an archived certificate.');
+        await expect(page.getByTestId('dialog-closed')).toHaveCount(0);
+    });
+
+    test('a confirmed registration closes the dialog', async ({ mount, page }) => {
+        await mount(<CertificateRekeyDialogTestWrapper />);
+        await switchToRegister(page);
+        await page.getByTestId('progress-button').click();
+        await page.getByTestId('simulate-register-success').click();
+
+        await expect(page.getByTestId('dialog-closed')).toBeAttached();
+    });
+});

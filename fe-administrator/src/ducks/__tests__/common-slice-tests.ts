@@ -1,0 +1,38 @@
+import { test, expect } from 'vitest';
+import type { UnknownAction } from '@reduxjs/toolkit';
+
+interface CommonSliceTestOptions<TState> {
+    reducer: (state: TState | undefined, action: UnknownAction) => TState;
+    actions: {
+        resetState: () => UnknownAction;
+        setCheckedRows: (payload: { checkedRows: string[] }) => UnknownAction;
+        clearDeleteErrorMessages?: () => UnknownAction;
+    };
+    initialState: TState;
+    dirtyOverrides: Partial<TState>;
+    deleteErrorOverrides?: Partial<TState>;
+    deleteErrorAssertions?: (state: TState) => void;
+}
+
+export function runCommonSliceTests<TState extends Record<string, unknown>>(opts: CommonSliceTestOptions<TState>) {
+    const { reducer, actions, initialState, dirtyOverrides, deleteErrorOverrides, deleteErrorAssertions } = opts;
+
+    test('resetState restores initialState', () => {
+        const dirty = { ...initialState, ...dirtyOverrides };
+        expect(reducer(dirty, actions.resetState())).toEqual(initialState);
+    });
+
+    test('setCheckedRows updates checkedRows', () => {
+        const next = reducer(initialState, actions.setCheckedRows({ checkedRows: ['a', 'b'] }));
+        expect((next as Record<string, unknown>).checkedRows).toEqual(['a', 'b']);
+    });
+
+    if (actions.clearDeleteErrorMessages && deleteErrorOverrides && deleteErrorAssertions) {
+        test('clearDeleteErrorMessages clears error fields', () => {
+            const state = { ...initialState, ...deleteErrorOverrides };
+            const next = reducer(state, actions.clearDeleteErrorMessages!());
+            expect(next).not.toBe(state);
+            deleteErrorAssertions(next);
+        });
+    }
+}

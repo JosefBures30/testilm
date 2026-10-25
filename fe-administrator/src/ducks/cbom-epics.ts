@@ -1,0 +1,314 @@
+import type { AppEpic } from 'ducks';
+import { concat, EMPTY, of } from 'rxjs';
+import { catchError, expand, filter, map, mergeMap, reduce, switchMap } from 'rxjs/operators';
+import type { ContributedAssetRefs } from 'utils/cbom-asset-links';
+import { extractError } from 'utils/net';
+import { alertsSlice } from './alert-slice';
+import { actions as appRedirectActions } from './app-redirect';
+import { EntityType } from './filters';
+import { actions as pagingActions, selectors as pagingSelectors, entityListParams, listParamsAfterDelete } from './paging';
+import { slice } from './cbom';
+import {
+    transformCbomDtoToModel,
+    transformCbomDetailDtoToModel,
+    transformPaginationResponseDtoToModel,
+    transformSearchableFieldsDtoToModel,
+    transformCbomUploadRequestModelToDto,
+} from './transform/cbom';
+import { actions as userInterfaceActions } from './user-interface';
+import { LockWidgetNameEnum } from 'types/user-interface';
+
+const DUPLICATE_CBOM_MESSAGE =
+    'A CBOM with the same serial number and version already exists.\nPlease upload a new version or update the existing CBOM.';
+
+// Core's message when it stored the document but not its custom attributes; it names the stored CBOM by its UUID.
+const STORED_WITHOUT_ATTRIBUTES = /CBOM with UUID (\S+) was stored, but its custom attributes could not be stored/;
+
+// Core answers a duplicate serial number and version with 409; an error that carries no status is judged by its text.
+const isDuplicateCbom = (message: string, status: number | undefined): boolean =>
+    status === undefined ? /already exists/i.test(message) : status === 409;
+
+const normalizeCbomUploadErrorMessage = (message: string, status: number | undefined): string => {
+    if (isDuplicateCbom(message, status)) {
+        return DUPLICATE_CBOM_MESSAGE;
+    }
+
+    return message
+        .replaceAll(/\balready exists(?:\s+already exists)+\b/gi, 'already exists')
+        .replaceAll(/\s{2,}/g, ' ')
+        .trim();
+};
+
+const listCboms: AppEpic = (action$, state, deps) => {
+    return action$.pipe(
+        filter(slice.actions.listCboms.match),
+        switchMap((action) =>
+            concat(
+                of(pagingActions.list(EntityType.CBOM)),
+                deps.apiClients.cbomManagement.listCboms({ searchRequestDto: action.payload }).pipe(
+                    mergeMap((response) => {
+                        const transformedResponse = transformPaginationResponseDtoToModel(response);
+                        const totalItems = transformedResponse.totalItems ?? transformedResponse.items?.length ?? 0;
+
+                        return of(
+                            slice.actions.listCbomsSuccess({
+                                data: transformedResponse,
+                            }),
+                            pagingActions.listSuccess({
+                                entity: EntityType.CBOM,
+                                totalItems,
+                            }),
+                            userInterfaceActions.removeWidgetLock(LockWidgetNameEnum.ListOfCboms),
+                        );
+                    }),
+                    catchError((err) =>
+                        of(
+                            slice.actions.listCbomsFailure({ error: extractError(err, 'Failed to fetch CBOMs') }),
+                            pagingActions.listFailure(EntityType.CBOM),
+                            userInterfaceActions.insertWidgetLock(err, LockWidgetNameEnum.ListOfCboms),
+                        ),
+                    ),
+                ),
+            ),
+        ),
+    );
+};
+
+const getCbomDetail: AppEpic = (action$, state, deps) => {
+    return action$.pipe(
+        filter(slice.actions.getCbomDetail.match),
+        switchMap((action) =>
+            deps.apiClients.cbomManagement.getCbomDetail({ uuid: action.payload.uuid }).pipe(
+                mergeMap((detail) =>
+                    of(
+                        slice.actions.getCbomDetailSuccess({
+                            detail: transformCbomDetailDtoToModel(detail),
+                        }),
+                        userInterfaceActions.removeWidgetLock(LockWidgetNameEnum.CbomDetail),
+                    ),
+                ),
+                catchError((err) =>
+                    (() => {
+                        const statusCode = typeof err?.status === 'number' ? err.status : undefined;
+                        const payload =
+                            typeof statusCode === 'number'
+                                ? { error: extractError(err, 'Failed to fetch CBOM detail'), statusCode }
+                                : { error: extractError(err, 'Failed to fetch CBOM detail') };
+
+                        return of(
+                            slice.actions.getCbomDetailFailure(payload),
+                            userInterfaceActions.insertWidgetLock(err, LockWidgetNameEnum.CbomDetail),
+                        );
+                    })(),
+                ),
+            ),
+        ),
+    );
+};
+
+const listCbomVersions: AppEpic = (action$, state, deps) => {
+    return action$.pipe(
+        filter(slice.actions.listCbomVersions.match),
+        switchMap((action) =>
+            deps.apiClients.cbomManagement.listCbomVersions({ uuid: action.payload.uuid }).pipe(
+                mergeMap((versions) =>
+                    of(
+                        slice.actions.listCbomVersionsSuccess({
+                            versions: versions.map(transformCbomDtoToModel),
+                        }),
+                        userInterfaceActions.removeWidgetLock(LockWidgetNameEnum.CbomVersions),
+                    ),
+                ),
+                catchError((err) =>
+                    of(
+                        slice.actions.listCbomVersionsFailure({ error: extractError(err, 'Failed to fetch CBOM versions') }),
+                        userInterfaceActions.insertWidgetLock(err, LockWidgetNameEnum.CbomVersions),
+                    ),
+                ),
+            ),
+        ),
+    );
+};
+
+// The listing has no bom-ref filter and clamps a page at this size, so the whole map means walking every page.
+const CONTRIBUTED_ASSETS_PAGE_SIZE = 1000;
+
+const listCbomContributedAssets: AppEpic = (action$, state, deps) => {
+    return action$.pipe(
+        filter(slice.actions.listCbomContributedAssets.match),
+        switchMap((action) => {
+            const { uuid } = action.payload;
+            const fetchPage = (pageNumber: number) =>
+                deps.apiClients.cbomManagement.listCbomCryptographicAssets({
+                    uuid,
+                    searchRequestDto: { pageNumber, itemsPerPage: CONTRIBUTED_ASSETS_PAGE_SIZE },
+                });
+
+            return fetchPage(1).pipe(
+                // Every page up to totalPages is read, a sparse one included: a row withdrawn while the page was read is left out
+                // of it, so a short or empty page says nothing about the pages after it.
+                expand((page, index) => (index + 1 < page.totalPages ? fetchPage(index + 2) : EMPTY)),
+                reduce(
+                    (assets, page) => assets.concat(page.items.map((item) => ({ assetUuid: item.uuid, bomRefs: item.bomRefs ?? [] }))),
+                    [] as ContributedAssetRefs[],
+                ),
+                map((assets) => slice.actions.listCbomContributedAssetsSuccess({ uuid, assets })),
+                catchError((err) =>
+                    of(
+                        slice.actions.listCbomContributedAssetsFailure({
+                            uuid,
+                            error: extractError(err, 'Failed to fetch the crypto assets this CBOM contributed'),
+                            statusCode: typeof err?.status === 'number' ? err.status : undefined,
+                        }),
+                    ),
+                ),
+            );
+        }),
+    );
+};
+
+const getSearchableFields: AppEpic = (action$, state, deps) => {
+    return action$.pipe(
+        filter(slice.actions.getSearchableFields.match),
+        switchMap(() =>
+            deps.apiClients.cbomManagement.getCbomSearchableFields().pipe(
+                map((fields) =>
+                    slice.actions.getSearchableFieldsSuccess({
+                        fields: transformSearchableFieldsDtoToModel(fields),
+                    }),
+                ),
+                catchError((err) =>
+                    of(
+                        slice.actions.getSearchableFieldsFailure({ error: extractError(err, 'Failed to fetch searchable fields') }),
+                        appRedirectActions.fetchError({ error: err, message: 'Failed to fetch searchable fields' }),
+                    ),
+                ),
+            ),
+        ),
+    );
+};
+
+const uploadCbom: AppEpic = (action$, state, deps) => {
+    return action$.pipe(
+        filter(slice.actions.uploadCbom.match),
+        switchMap((action) =>
+            deps.apiClients.cbomManagement.uploadCbom({ cbomUploadRequestDto: transformCbomUploadRequestModelToDto(action.payload) }).pipe(
+                mergeMap((cbom) =>
+                    of(
+                        slice.actions.uploadCbomSuccess({
+                            cbom: transformCbomDtoToModel(cbom),
+                        }),
+                        alertsSlice.actions.success('CBOM uploaded successfully.'),
+                    ),
+                ),
+                catchError((err) => {
+                    const stored = STORED_WITHOUT_ATTRIBUTES.exec(extractError(err, ''));
+                    if (stored) {
+                        const error = extractError(err, 'Failed to store the custom attributes of the uploaded CBOM');
+                        return of(
+                            slice.actions.uploadCbomStoredWithoutAttributes({ error, uuid: stored[1] }),
+                            alertsSlice.actions.error(error),
+                        );
+                    }
+                    const status = typeof err?.status === 'number' ? err.status : undefined;
+                    const errorMessage = normalizeCbomUploadErrorMessage(extractError(err, 'Failed to upload CBOM'), status);
+                    return of(slice.actions.uploadCbomFailure({ error: errorMessage }), alertsSlice.actions.error(errorMessage));
+                }),
+            ),
+        ),
+    );
+};
+
+const deleteCbom: AppEpic = (action$, state, deps) => {
+    return action$.pipe(
+        filter(slice.actions.deleteCbom.match),
+        switchMap((action) =>
+            deps.apiClients.cbomManagement.deleteCbom({ uuid: action.payload.uuid }).pipe(
+                mergeMap(() =>
+                    of(
+                        slice.actions.deleteCbomSuccess({ uuid: action.payload.uuid }),
+                        alertsSlice.actions.success('CBOM successfully deleted.'),
+                    ),
+                ),
+                catchError((err) =>
+                    of(
+                        slice.actions.deleteCbomFailure({ error: extractError(err, 'Failed to delete CBOM') }),
+                        alertsSlice.actions.error(extractError(err, 'Failed to delete CBOM')),
+                    ),
+                ),
+            ),
+        ),
+    );
+};
+
+const bulkDeleteCbom: AppEpic = (action$, state, deps) => {
+    return action$.pipe(
+        filter(slice.actions.bulkDeleteCbom.match),
+        switchMap((action) => {
+            // Snapshot paging *before* the delete resolves — PagedList fires an immediate
+            // pre-commit re-fetch on delete whose listSuccess can overwrite totalItems.
+            const paramsBeforeDelete = entityListParams(EntityType.CBOM, state.value);
+            const totalBeforeDelete = pagingSelectors.totalItems(EntityType.CBOM)(state.value);
+
+            return deps.apiClients.cbomManagement.bulkDeleteCbom({ requestBody: action.payload.uuids }).pipe(
+                mergeMap(() => {
+                    const listParams = listParamsAfterDelete(paramsBeforeDelete, totalBeforeDelete, action.payload.uuids.length);
+                    const pageNumberChanged = listParams.pageNumber !== paramsBeforeDelete.pageNumber;
+
+                    return of(
+                        slice.actions.bulkDeleteCbomSuccess({ uuids: action.payload.uuids }),
+                        alertsSlice.actions.success('Selected CBOMs successfully deleted.'),
+                        // Only re-align the paging slice when the deletion emptied the current page and
+                        // we had to step back. The re-read itself rides on the refresh token that
+                        // `bulkDeleteCbomSuccess` bumps, so the host replays its own request — columns
+                        // and ordering included — instead of one assembled from paging and filters here.
+                        ...(pageNumberChanged
+                            ? [
+                                  pagingActions.setPagination({
+                                      entity: EntityType.CBOM,
+                                      pageNumber: listParams.pageNumber,
+                                      pageSize: listParams.itemsPerPage,
+                                  }),
+                              ]
+                            : []),
+                    );
+                }),
+                catchError((err) =>
+                    of(
+                        slice.actions.bulkDeleteCbomFailure({ error: extractError(err, 'Failed to bulk delete CBOMs') }),
+                        alertsSlice.actions.error(extractError(err, 'Failed to bulk delete CBOMs')),
+                    ),
+                ),
+            );
+        }),
+    );
+};
+
+const syncCboms: AppEpic = (action$, state, deps) => {
+    return action$.pipe(
+        filter(slice.actions.syncCboms.match),
+        switchMap(() =>
+            deps.apiClients.cbomManagement.sync().pipe(
+                mergeMap(() => of(slice.actions.syncCbomsSuccess(), alertsSlice.actions.success('CBOMs successfully synchronized.'))),
+                catchError((err) =>
+                    of(
+                        slice.actions.syncCbomsFailure({ error: extractError(err, 'Failed to sync CBOMs') }),
+                        alertsSlice.actions.error(extractError(err, 'Failed to sync CBOMs')),
+                    ),
+                ),
+            ),
+        ),
+    );
+};
+
+export default [
+    listCboms,
+    getCbomDetail,
+    listCbomVersions,
+    getSearchableFields,
+    uploadCbom,
+    deleteCbom,
+    bulkDeleteCbom,
+    syncCboms,
+    listCbomContributedAssets,
+];

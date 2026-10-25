@@ -1,0 +1,35 @@
+{
+    "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+    "extends": ["config:recommended"],
+    "schedule": ["before 6am"],
+    "timezone": "Europe/Prague",
+    "labels": ["dependencies"],
+    "prConcurrentLimit": 10,
+    "prHourlyLimit": 0,
+    "packageRules": [
+        {
+            "matchUpdateTypes": ["minor", "patch", "pin", "digest"],
+            "groupName": "all non-major dependencies",
+            "groupSlug": "all-minor-patch"
+        },
+        {
+            "matchUpdateTypes": ["major"],
+            "dependencyDashboardApproval": true
+        },
+        {
+            "matchPackageNames": ["tailwindcss", "@tailwindcss/vite"],
+            "enabled": false
+        },
+        {
+            "description": "Keep @playwright/test on the version of @playwright/experimental-ct-react. The component-test packages stopped publishing at 1.62.1, and a newer @playwright/test brings a second Playwright whose types do not match the component-test expect. Raise both together once a newer component-test release exists.",
+            "matchPackageNames": ["@playwright/test", "@playwright/experimental-ct-react"],
+            "groupName": "playwright",
+            "groupSlug": "playwright",
+            "allowedVersions": "<=1.62.1"
+        }
+    ],
+    "lockFileMaintenance": {
+        "enabled": true,
+        "schedule": ["before 6am on Monday"]
+    }
+}

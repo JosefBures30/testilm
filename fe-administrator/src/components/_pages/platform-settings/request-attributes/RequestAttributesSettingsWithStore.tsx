@@ -1,0 +1,44 @@
+import { Provider } from 'react-redux';
+import { MemoryRouter } from 'react-router';
+import type { OidsTestState } from 'ducks/test-reducers';
+import { createMockStore } from 'utils/test-helpers';
+import RequestAttributesSettings from './RequestAttributesSettings';
+
+// Preload the platform default set as a *defined* (but empty) value so the component's
+// undefined → defined seed transition fires and `loaded` flips true, enabling the editor and
+// Save button. Component tests run no epics, so the mount-time getPlatformSettings fetch never
+// resolves on its own; a browser-side preloaded store is the supported way to reach the loaded
+// state (mirrors SigningRecordsDashboardWithStore). Creating the store inside this component
+// keeps it in the browser context — a store built in the Node test body does not transfer.
+export default function RequestAttributesSettingsWithStore({
+    strict,
+    oids,
+}: Readonly<{ strict?: boolean; oids?: Partial<OidsTestState> }>) {
+    const store = createMockStore({
+        raProfileRequestAttributes: {
+            defaultSet: { requestAttributes: [], externalCsrValidationStrict: strict },
+        },
+        ...(oids ? { oids } : {}),
+    } as any);
+    return (
+        <Provider store={store}>
+            <MemoryRouter initialEntries={['/platformsettings/request-attributes']}>
+                <RequestAttributesSettings />
+                {/* Stand-in for the epic's rejection path (CT runs no epics): flips the pending flag
+                    back with no success, which is what the editor rolls back on. */}
+                <button
+                    type="button"
+                    data-testid="simulate-rejection"
+                    onClick={() =>
+                        store.dispatch({
+                            type: 'raProfileRequestAttributes/updatePlatformDefaultRequestAttributesFailure',
+                            payload: { error: 'Attribute definition is invalid' },
+                        })
+                    }
+                >
+                    simulate rejection
+                </button>
+            </MemoryRouter>
+        </Provider>
+    );
+}

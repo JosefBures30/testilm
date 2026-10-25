@@ -1,0 +1,84 @@
+import { test, expect } from '../../../../../playwright/ct-test';
+import TimeSeriesChartWithStore from './TimeSeriesChartWithStore';
+import TimeSeriesChartNavHarness from './TimeSeriesChartNavHarness';
+import { EntityType } from 'ducks/filters';
+import { SigningRecordStatisticsPeriod } from 'types/openapi';
+
+const data = { '2026-06-18T00:00:00Z': 3, '2026-06-18T01:00:00Z': 5, '2026-06-18T02:00:00Z': 2 };
+
+test.describe('TimeSeriesChart', () => {
+    test('renders the title and the four period toggles', async ({ mount }) => {
+        const component = await mount(
+            <TimeSeriesChartWithStore
+                title="Signings over Time"
+                data={data}
+                entity={EntityType.SIGNING_RECORD}
+                redirect="/signingrecords"
+                onSetFilter={() => []}
+            />,
+        );
+        await expect(component.getByRole('heading', { name: 'Signings over Time' })).toBeVisible();
+        await expect(component.getByRole('button', { name: '24h' })).toBeVisible();
+        await expect(component.getByRole('button', { name: '7d' })).toBeVisible();
+        await expect(component.getByRole('button', { name: '30d' })).toBeVisible();
+        await expect(component.getByRole('button', { name: '90d' })).toBeVisible();
+    });
+
+    test('clicking a period moves the active highlight to that toggle', async ({ mount }) => {
+        const component = await mount(
+            <TimeSeriesChartWithStore
+                title="Signings over Time"
+                data={data}
+                entity={EntityType.SIGNING_RECORD}
+                redirect="/signingrecords"
+                initialPeriod={SigningRecordStatisticsPeriod._24h}
+                onSetFilter={() => []}
+            />,
+        );
+        await expect(component.getByRole('button', { name: '24h' })).toHaveClass(/text-content-on-brand/);
+        await component.getByRole('button', { name: '7d' }).click();
+        await expect(component.getByRole('button', { name: '7d' })).toHaveClass(/text-content-on-brand/);
+        await expect(component.getByRole('button', { name: '24h' })).not.toHaveClass(/text-content-on-brand/);
+    });
+
+    test('clicking a data point drills down (navigates to the redirect)', async ({ mount, page }) => {
+        const component = await mount(
+            <TimeSeriesChartNavHarness title="Signings over Time" data={data} entity={EntityType.SIGNING_RECORD} onSetFilter={() => []} />,
+        );
+        const surface = component.locator('.recharts-surface').first();
+        await expect(surface).toBeVisible();
+        const box = await surface.boundingBox();
+        if (!box) throw new Error('chart surface not found');
+        await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+        const activeDot = page.locator('.recharts-active-dot');
+        await expect(activeDot).toBeVisible();
+        await activeDot.click();
+        await expect(page.getByTestId('landed-on-redirect')).toBeVisible();
+    });
+
+    test('the y-axis labels counts as distinct whole numbers', async ({ mount }) => {
+        const component = await mount(
+            <TimeSeriesChartWithStore
+                title="Signings over Time"
+                data={{ '2026-06-18T00:00:00Z': 1, '2026-06-18T01:00:00Z': 2, '2026-06-18T02:00:00Z': 2 }}
+                entity={EntityType.SIGNING_RECORD}
+                redirect="/signingrecords"
+                onSetFilter={() => []}
+            />,
+        );
+        const ticks = component.locator('.recharts-yAxis-tick-labels .recharts-cartesian-axis-tick-value');
+        await expect(ticks).toHaveText(['0', '1', '2']);
+    });
+
+    test('clicking empty plot space does not navigate', async ({ mount, page }) => {
+        const component = await mount(
+            <TimeSeriesChartNavHarness title="Signings over Time" data={data} entity={EntityType.SIGNING_RECORD} onSetFilter={() => []} />,
+        );
+        const surface = component.locator('.recharts-surface').first();
+        await expect(surface).toBeVisible();
+        const box = await surface.boundingBox();
+        if (!box) throw new Error('chart surface not found');
+        await page.mouse.click(box.x + 3, box.y + 3);
+        await expect(page.getByTestId('landed-on-redirect')).toHaveCount(0);
+    });
+});

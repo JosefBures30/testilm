@@ -1,0 +1,291 @@
+{{- $replicaCount := pluck "replicaCount" .Values.global .Values | compact | first }}
+{{- $messagingAmqpPort := .Values.service.client.amqp.port }}
+{{- $messagingHttpPort := .Values.service.client.http.port }}
+{{- $additionalInitContainers := (include "messaging-rabbitmq.customization.initContainers" $) }}
+{{- $additionalSidecarContainers := (include "messaging-rabbitmq.customization.sidecarContainers" $) }}
+{{- $additionalVolumes := (include "messaging-rabbitmq.customization.volumes" $) }}
+{{- $additionalVolumeMounts := (include "messaging-rabbitmq.customization.volumeMounts" $) }}
+{{- $additionalEnv := (include "messaging-rabbitmq.customization.env" $) }}
+{{- $additionalEnvFrom := (include "messaging-rabbitmq.customization.envFrom" $) }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: messaging-statefulset
+  labels:
+    {{- include "messaging-rabbitmq.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ $replicaCount | default 1 }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "messaging-rabbitmq.selectorLabels" . | nindent 6 }}
+  # headless service that gives network identity to the RMQ nodes, and enables them to cluster
+  serviceName: messaging-service-headless
+  template:
+    metadata:
+      labels:
+        {{- include "messaging-rabbitmq.selectorLabels" . | nindent 8 }}
+      {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      annotations:
+        # when the messaging config map is changed, restart deployment
+        checksum/config: {{ include "messaging-rabbitmq.rabbitmq.conf" (dict "global" .Values.global "messagingService" .Values) | sha256sum }}
+        # when the messaging secret is changed, restart deployment
+        {{- if not (pluck "existingSecret" .Values.global.messaging .Values.messaging | compact | first) }}
+        checksum/secret: {{ include "messaging-rabbitmq.definitions.json" (dict "global" .Values.global "messagingService" .Values) | sha256sum }}
+        {{- end }}
+      {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      {{- include "messaging-rabbitmq.imagePullSecrets" . | indent 6 }}
+      {{- if .Values.podSecurityContext }}
+      securityContext: {{- .Values.podSecurityContext | toYaml | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ template "messaging-rabbitmq.serviceAccountName" . }}
+      {{- if $additionalInitContainers }}
+      initContainers:
+        {{- $additionalInitContainers | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: rabbitmq
+          image: {{ include "messaging-rabbitmq.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- if .Values.image.command }}
+          command: {{- include "messaging-rabbitmq.image.command" . | nindent 12 }}
+          {{- end }}
+          {{- if .Values.image.args }}
+          args: {{- include "messaging-rabbitmq.image.args" . | nindent 12 }}
+          {{- end }}
+          env:
+            - name: RABBITMQ_DEFAULT_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "messaging-rabbitmq.messagingSecretName" . | quote }}
+                  key: messaging.password
+            - name: RABBITMQ_DEFAULT_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "messaging-rabbitmq.messagingSecretName" . | quote }}
+                  key: messaging.username
+            - name: RABBITMQ_ERLANG_COOKIE
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "messaging-rabbitmq.messagingSecretName" . | quote }}
+                  key: messaging.cookie
+            - name: RABBITMQ_LOGS
+              value: "-"
+            - name: MY_POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: MY_POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: MY_POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: K8S_SERVICE_NAME
+              value: "messaging-service-headless"
+            - name: K8S_ADDRESS_TYPE
+              value: {{ .Values.clustering.addressType }}
+            {{- if (eq "hostname" .Values.clustering.addressType) }}
+            - name: RABBITMQ_NODE_NAME
+              value: "rabbit@$(MY_POD_NAME).$(K8S_SERVICE_NAME).$(MY_POD_NAMESPACE).svc.{{ .Values.clustering.domain }}"
+            - name: K8S_HOSTNAME_SUFFIX
+              value: ".$(K8S_SERVICE_NAME).$(MY_POD_NAMESPACE).svc.{{ .Values.clustering.domain }}"
+            {{- else }}
+            - name: RABBITMQ_NODE_NAME
+              value: "rabbit@$(MY_POD_NAME)"
+            {{- end }}
+            - name: RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS
+              value: "-rabbitmq_management load_definitions '/tmp/definitions.json'"
+            {{- if $additionalEnv }}
+              {{- $additionalEnv | nindent 12 }}
+            {{- end }}
+          {{- if $additionalEnvFrom }}
+          envFrom:
+            {{- $additionalEnvFrom | indent 12 }}
+          {{- end }}
+          ports:
+            - name: amqp
+              containerPort: {{ $messagingAmqpPort }}
+              protocol: "TCP"
+            - name: management
+              containerPort: {{ $messagingHttpPort }}
+              protocol: "TCP"
+            - name: epmd
+              containerPort: {{ .Values.service.headless.epmd.port }}
+              protocol: "TCP"
+          {{- if .Values.image.securityContext }}
+          securityContext: {{- .Values.image.securityContext | toYaml | nindent 12 }}
+          {{- end }}
+          {{- if .Values.image.probes.liveness.enabled }}
+          livenessProbe:
+            {{- if .Values.image.probes.liveness.custom }}
+            {{- toYaml .Values.image.probes.liveness.custom | nindent 12 }}
+            {{- else }}
+            exec:
+              command: [ "rabbitmq-diagnostics", "status" ]
+            {{- end }}
+            # See https://www.rabbitmq.com/monitoring.html for monitoring frequency recommendations.
+            initialDelaySeconds: {{ .Values.image.probes.liveness.initialDelaySeconds }}
+            timeoutSeconds: {{ .Values.image.probes.liveness.timeoutSeconds }}
+            periodSeconds: {{ .Values.image.probes.liveness.periodSeconds }}
+            successThreshold: {{ .Values.image.probes.liveness.successThreshold }}
+            failureThreshold: {{ .Values.image.probes.liveness.failureThreshold }}
+          {{- end }}
+          {{- if .Values.image.probes.readiness.enabled }}
+          # probe to know when RabbitMQ is ready to accept traffic
+          readinessProbe:
+            {{- if .Values.image.probes.readiness.custom }}
+            {{- toYaml .Values.image.probes.readiness.custom | nindent 12 }}
+            {{- else }}
+            exec:
+              command: [ "rabbitmq-diagnostics", "ping" ]
+            {{- end }}
+            initialDelaySeconds: {{ .Values.image.probes.readiness.initialDelaySeconds }}
+            timeoutSeconds: {{ .Values.image.probes.readiness.timeoutSeconds }}
+            periodSeconds: {{ .Values.image.probes.readiness.periodSeconds }}
+            successThreshold: {{ .Values.image.probes.readiness.successThreshold }}
+            failureThreshold: {{ .Values.image.probes.readiness.failureThreshold }}
+          {{- end }}
+          {{- if .Values.image.probes.startup.enabled }}
+          startupProbe:
+            {{- if .Values.image.probes.startup.custom }}
+            {{- toYaml .Values.image.probes.startup.custom | nindent 12 }}
+            {{- else }}
+            exec:
+              command: [ "rabbitmq-diagnostics", "ping" ]
+            {{- end }}
+            initialDelaySeconds: {{ .Values.image.probes.startup.initialDelaySeconds }}
+            timeoutSeconds: {{ .Values.image.probes.startup.timeoutSeconds }}
+            periodSeconds: {{ .Values.image.probes.startup.periodSeconds }}
+            successThreshold: {{ .Values.image.probes.startup.successThreshold }}
+            failureThreshold: {{ .Values.image.probes.startup.failureThreshold }}
+          {{- end }}
+          {{- if .Values.image.resources }}
+          resources: {{- toYaml .Values.image.resources | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            #- name: rabbitmq-config-rw
+            #  mountPath: "/etc/rabbitmq"
+              # mountPath: "/etc/rabbitmq/conf.d/"
+            # mounting rabbitmq.conf and enabled_plugins
+            - name: configuration
+              mountPath: "/etc/rabbitmq"
+            #   # mountPath: "/etc/rabbitmq/conf.d/"
+            - name: rabbitmq-erlang-cookie
+              mountPath: "/var/lib/rabbitmq"
+            # rabbitmq data directory
+            - name: data
+              mountPath: "/var/lib/rabbitmq/mnesia"
+              subPath: rabbitmq
+            # there is a bug in the Docker image that prevents upgrade logs from being written to stdout
+            - name: definitions
+              mountPath: "/tmp"
+            - mountPath: /var/log/rabbitmq
+              name: ephemeral
+            {{- if $additionalVolumeMounts }}
+              {{- $additionalVolumeMounts | nindent 12 }}
+            {{- end }}
+          {{- if .Values.messaging.enableFlags }}
+          lifecycle:
+            postStart:
+              exec:
+                command:
+                  - "sh"
+                  - "-ec"
+                  - |
+                    # Run in the background so the hook doesn't block or fail the pod
+                    (
+                      echo "[postStart] Waiting for RabbitMQ to start..."
+                      # Retry await_startup until success or timeout (~8 minutes)
+                      timeout=480
+                      deadline=$((SECONDS + timeout))
+
+                      until rabbitmqctl await_startup >/dev/null 2>&1; do
+                        if [ "$SECONDS" -ge "$deadline" ]; then
+                          echo "[postStart] Timed out waiting for RabbitMQ after ${timeout}s"
+                          break
+                        fi
+                        sleep 3
+                      done
+
+                      echo "[postStart] Enabling all feature flags..."
+                      rabbitmqctl enable_feature_flag all || true
+
+                      echo "[postStart] Done enabling feature flags."
+                    ) &
+                    exit 0
+          {{- end }}
+        {{- if $additionalSidecarContainers }}
+          {{- $additionalSidecarContainers | nindent 8 }}
+        {{- end }}
+      volumes:
+        - name: configuration
+          configMap:
+            {{- if .Values.global.config.enabled }}
+            name: messaging-configmap
+            {{- else }}
+            name: messaging-configmap-{{ .Chart.Name | lower }}
+            {{- end }}
+            optional: false
+            items:
+              - key: messaging.rabbitmq.conf
+                path: "rabbitmq.conf"
+              - key: messaging.enabled_plugins
+                path: "enabled_plugins"
+        - name: definitions
+          secret:
+            secretName: {{ include "messaging-rabbitmq.messagingSecretName" . | quote }}
+            optional: false
+            items:
+              - key: messaging.definitions.json
+                path: "definitions.json"
+        - name: ephemeral
+          {{- include "messaging-rabbitmq.ephemeralVolume" . | indent 10 }}
+        - name: rabbitmq-erlang-cookie
+          emptyDir:
+            medium: Memory
+            sizeLimit: 1Mi
+        {{- if $additionalVolumes }}
+          {{- $additionalVolumes | nindent 8 }}
+        {{- end }}
+  {{- if not .Values.persistence.enabled }}
+        - name: data
+          emptyDir: {}
+  {{- else if .Values.persistence.existingClaim }}
+        - name: data
+          persistentVolumeClaim:
+            {{- with .Values.persistence.existingClaim }}
+            claimName: {{ tpl . $ }}
+            {{- end }}
+  {{- else }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels:
+          {{- include "messaging-rabbitmq.selectorLabels" . | nindent 10 }}
+        {{- if .Values.persistence.annotations }}
+        annotations: {{- .Values.persistence.annotations | toYaml | nindent 10 }}
+        {{- end }}
+      spec:
+        accessModes:
+          {{- range .Values.persistence.accessModes }}
+          - {{ . | quote }}
+          {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.persistence.size | quote }}
+        {{- if .Values.persistence.storageClassName }}
+        storageClassName: {{ .Values.persistence.storageClassName }}
+        {{- end }}
+        {{- if .Values.persistence.selector }}
+        selector: {{- .Values.persistence.selector | toYaml | nindent 10 }}
+        {{- end -}}
+  {{- end }}

@@ -1,0 +1,9 @@
+{{- if not .Values.global.config.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: api-gateway-configmap
+data:
+  kong.yml: |-
+    {{- include "api-gateway-kong.config.yml" (dict "global" .Values.global "apiGateway" .Values) | indent 4 }}
+{{- end }}

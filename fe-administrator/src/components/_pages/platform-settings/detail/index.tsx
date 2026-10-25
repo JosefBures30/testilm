@@ -1,0 +1,115 @@
+import DetailPageSkeleton from 'components/DetailPageSkeleton';
+import AppearanceSettings from 'components/_pages/platform-settings/appearance/AppearanceSettings';
+import CertificateSettings from 'components/_pages/platform-settings/certificates/CertificateSettings';
+import RequestAttributesSettings from 'components/_pages/platform-settings/request-attributes/RequestAttributesSettings';
+import UtilsSettings from 'components/_pages/platform-settings/utils/UtilsSettings';
+import TabLayout from 'components/Layout/TabLayout';
+import Widget from 'components/Widget';
+import type { WidgetButtonProps } from 'components/WidgetButtons';
+
+import { actions, selectors } from 'ducks/settings';
+import { selectors as authSelectors } from 'ducks/auth';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useDispatch, useSelector } from 'react-redux';
+
+import { LockWidgetNameEnum } from 'types/user-interface';
+import { Resource, ResourceAction } from 'types/openapi';
+import { hasResourceAction } from 'utils/permissions';
+import Dialog from 'components/Dialog';
+import PlatformSettingsForm from '../form';
+
+export default function PlatformSettingsDetail() {
+    const dispatch = useDispatch();
+
+    const platformSettings = useSelector(selectors.platformSettings);
+    const profile = useSelector(authSelectors.profile);
+    const isFetchingPlatform = useSelector(selectors.isFetchingPlatform);
+    const [isEditModalOpen, setIsEditModalOpen] = useState<boolean>(false);
+
+    const getFreshPlatformSettings = useCallback(() => {
+        dispatch(actions.getPlatformSettings());
+    }, [dispatch]);
+
+    useEffect(() => {
+        getFreshPlatformSettings();
+    }, [getFreshPlatformSettings]);
+
+    const handleOpenEditModal = useCallback(() => {
+        setIsEditModalOpen(true);
+    }, []);
+
+    const handleCloseEditModal = useCallback(() => {
+        setIsEditModalOpen(false);
+    }, []);
+
+    const handleSuccessEditModal = useCallback(() => {
+        setIsEditModalOpen(false);
+        getFreshPlatformSettings();
+    }, [getFreshPlatformSettings]);
+
+    const onEditClick = useCallback(() => {
+        handleOpenEditModal();
+    }, [handleOpenEditModal]);
+
+    const buttons: WidgetButtonProps[] = useMemo(
+        () => [
+            {
+                icon: 'pencil',
+                disabled: false,
+                tooltip: 'Edit',
+                onClick: () => {
+                    onEditClick();
+                },
+            },
+        ],
+        [onEditClick],
+    );
+
+    // Core remains the enforcement point; this only decides whether to offer the tab.
+    const canUpdateBranding = hasResourceAction(profile, Resource.Settings, ResourceAction.UpdateBranding);
+
+    // Declared once so the skeleton below cannot advertise a different number of tabs than the layout renders.
+    const tabs = [
+        {
+            title: 'Utils',
+            content: <UtilsSettings platformSettings={platformSettings} />,
+        },
+        {
+            title: 'Certificates',
+            content: <CertificateSettings platformSettings={platformSettings} />,
+        },
+        {
+            title: 'Request Attributes',
+            content: <RequestAttributesSettings />,
+        },
+        // Omitted rather than shown read-only: branding is the operator's identity, and someone who cannot change it
+        // has nothing to do on this tab. The colours and logos themselves are visible to everyone in the applied UI.
+        ...(canUpdateBranding ? [{ title: 'Appearance', content: <AppearanceSettings /> }] : []),
+    ];
+
+    if (isFetchingPlatform && !isEditModalOpen) {
+        return <DetailPageSkeleton layout="tabs" tabCount={tabs.length} rowCount={2} showBreadcrumb={false} tabWidgetButtonsCount={1} />;
+    }
+
+    return (
+        <div>
+            <Widget
+                title="Platform Settings"
+                widgetLockName={LockWidgetNameEnum.PlatformSettings}
+                widgetButtons={buttons}
+                titleSize="large"
+                refreshAction={getFreshPlatformSettings}
+            >
+                <TabLayout tabUrlParam="tab" noBorder isLoading={isFetchingPlatform && !isEditModalOpen} tabs={tabs} />
+            </Widget>
+
+            <Dialog
+                isOpen={isEditModalOpen}
+                toggle={handleCloseEditModal}
+                caption="Edit Platform Settings"
+                size="xl"
+                body={<PlatformSettingsForm onCancel={handleCloseEditModal} onSuccess={handleSuccessEditModal} />}
+            />
+        </div>
+    );
+}

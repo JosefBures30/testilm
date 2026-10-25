@@ -1,0 +1,459 @@
+import CustomTable, { type TableDataRow, type TableHeader } from 'components/CustomTable';
+import Widget from 'components/Widget';
+import type { WidgetButtonProps } from 'components/WidgetButtons';
+import { getEnumLabel, selectors as enumSelectors } from 'ducks/enums';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router';
+
+import { actions as resourceActions, selectors as resourceSelectors } from 'ducks/resource';
+import { actions as settingsActions, selectors as settingsSelectors } from 'ducks/settings';
+import { actions as rulesActions, selectors as rulesSelectors } from 'ducks/rules';
+import { useDispatch, useSelector } from 'react-redux';
+import { PlatformEnum, Resource, type ResourceEvent } from 'types/openapi';
+import type { LockWidgetNameEnum } from 'types/user-interface';
+import Dialog from 'components/Dialog';
+import { useForm, Controller, FormProvider, useWatch } from 'react-hook-form';
+import Button from 'components/Button';
+import ProgressButton from 'components/ProgressButton';
+import Select, { type OptionValue } from 'components/Select';
+import { EnumColumnDescription } from 'components/EnumDescription';
+import { Edit } from 'lucide-react';
+import TriggerEditorWidget from 'components/TriggerEditorWidget';
+import { useAreDefaultValuesSame, useRunOnSuccessfulFinish } from 'utils/common-hooks';
+import Container from 'components/Container';
+
+type Props = (
+    | {
+          mode: 'association';
+          resource: Resource;
+          resourceUuid: string;
+      }
+    | { mode: 'platform'; resource?: never; resourceUuid?: never }
+) & {
+    widgetLocks: LockWidgetNameEnum[];
+};
+
+type OptionType = {
+    value: string;
+    label: string;
+};
+type FormValues = {
+    event?: OptionType;
+    resource?: OptionType;
+    triggerUuids?: string[];
+};
+const EventsTable = ({ mode, resource, resourceUuid, widgetLocks }: Props) => {
+    const dispatch = useDispatch();
+
+    const allResourceEvents = useSelector(resourceSelectors.allResourceEvents);
+    const eventsSettings = useSelector(settingsSelectors.eventsSettings);
+
+    const resourceEvents = useSelector(resourceSelectors.resourceEvents);
+    const eventTriggerAssociation = useSelector(rulesSelectors.eventTriggerAssociation);
+    const isFetchingResourcesList = useSelector(resourceSelectors.isFetchingResourcesList);
+    const isFetchingEventTriggersAssociation = useSelector(rulesSelectors.isFetchingEventTriggersAssociation);
+    const isUpdatingEventTriggersAssociation = useSelector(rulesSelectors.isUpdatingEventTriggersAssociation);
+    const associateEventTriggersSucceeded = useSelector(rulesSelectors.associateEventTriggersSucceeded);
+    const isFetchingEventsSetting = useSelector(settingsSelectors.isFetchingEventsSetting);
+    const isUpdatingEventsSetting = useSelector(settingsSelectors.isUpdatingEventsSetting);
+    const updateEventSettingsSucceeded = useSelector(settingsSelectors.updateEventSettingsSucceeded);
+
+    const resourceEnum = useSelector(enumSelectors.platformEnum(PlatformEnum.Resource));
+    const resourceEventEnum = useSelector(enumSelectors.platformEnum(PlatformEnum.ResourceEvent));
+
+    const [isTriggersDialogOpen, setIsTriggersDialogOpen] = useState(false);
+    const [editedEvent, setEditedEvent] = useState<ResourceEvent | null>(null);
+
+    const isBusy = useMemo(
+        () =>
+            isFetchingResourcesList ||
+            isFetchingEventTriggersAssociation ||
+            isUpdatingEventTriggersAssociation ||
+            isFetchingEventsSetting ||
+            isUpdatingEventsSetting,
+        [
+            isFetchingResourcesList,
+            isFetchingEventTriggersAssociation,
+            isUpdatingEventTriggersAssociation,
+            isFetchingEventsSetting,
+            isUpdatingEventsSetting,
+        ],
+    );
+
+    const fetchEventAssociations = useCallback(() => {
+        if (mode === 'association') {
+            dispatch(rulesActions.getEventTriggersAssociations({ resource, associationObjectUuid: resourceUuid }));
+        }
+    }, [dispatch, mode, resource, resourceUuid]);
+
+    const fetchEventsSettings = useCallback(() => {
+        if (mode === 'platform') {
+            dispatch(settingsActions.getEventsSettings());
+        }
+    }, [dispatch, mode]);
+
+    const fetchResources = useCallback(() => {
+        if (mode === 'association') {
+            dispatch(resourceActions.listResourceEvents({ resource: resource }));
+        } else if (mode === 'platform') {
+            dispatch(resourceActions.listAllResourceEvents());
+        }
+    }, [dispatch, mode, resource]);
+
+    useEffect(() => {
+        fetchEventAssociations();
+    }, [fetchEventAssociations]);
+
+    useEffect(() => {
+        fetchEventsSettings();
+    }, [fetchEventsSettings]);
+
+    useEffect(() => {
+        fetchResources();
+    }, [fetchResources]);
+
+    useEffect(() => {}, [dispatch, mode, resource]);
+
+    const onClose = useCallback(() => {
+        setEditedEvent(null);
+        setIsTriggersDialogOpen(false);
+    }, []);
+
+    const onEdit = useCallback((event: ResourceEvent) => {
+        setEditedEvent(event);
+        setIsTriggersDialogOpen(true);
+    }, []);
+
+    const onSubmit = useCallback(
+        (values: FormValues) => {
+            if (!values.event) return;
+            // Block empty triggers only when adding. When editing, clearing all triggers
+            // is a legitimate "remove" operation: association mode deletes the eventsMapping
+            // key, platform mode writes eventsMapping[event] = [] which the table filters out
+            // — effectively the same outcome.
+            if (!editedEvent && !values.triggerUuids?.length) return;
+            if (mode === 'association') {
+                dispatch(
+                    rulesActions.associateEventTriggers({
+                        triggerEventAssociationRequestModel: {
+                            event: values.event.value as ResourceEvent,
+                            objectUuid: resourceUuid,
+                            resource: resource,
+                            triggerUuids: values.triggerUuids ?? [],
+                        },
+                    }),
+                );
+            } else {
+                dispatch(
+                    settingsActions.updateEventSettings({
+                        eventSettings: {
+                            event: values.event.value as ResourceEvent,
+                            triggerUuids: values.triggerUuids ?? [],
+                        },
+                    }),
+                );
+            }
+        },
+        [dispatch, mode, resource, resourceUuid, editedEvent],
+    );
+
+    useRunOnSuccessfulFinish(
+        mode === 'association' ? isFetchingEventTriggersAssociation : isUpdatingEventsSetting,
+        mode === 'association' ? associateEventTriggersSucceeded : updateEventSettingsSucceeded,
+        onClose,
+    );
+    const getResourceEventModel = useCallback(
+        (event?: ResourceEvent | string | null) => {
+            return mode === 'association'
+                ? resourceEvents.find((el) => el.event === event)
+                : allResourceEvents.find((el) => el.event === event);
+        },
+        [allResourceEvents, mode, resourceEvents],
+    );
+    const textContent: {
+        title: string;
+        dialogTitle: string;
+        description: string;
+        addTooltip: string;
+        confirmDialogButtonText: string;
+    } = useMemo(() => {
+        if (mode === 'association') {
+            return {
+                title: 'Associated Events',
+                dialogTitle: 'Associate Event Triggers',
+                description: `When an Event is produced on Resources related to this ${getEnumLabel(resourceEnum, resource)}, assigned Triggers are fired`,
+                addTooltip: 'Associate Event',
+                confirmDialogButtonText: 'Associate',
+            };
+        }
+        return {
+            title: 'Platform Events',
+            dialogTitle: 'Configure Event Triggers',
+            description: 'When an Event is produced, assigned Triggers are fired',
+            addTooltip: 'Add Event',
+            confirmDialogButtonText: 'Add',
+        };
+    }, [mode, resource, resourceEnum]);
+
+    const headers: TableHeader[] = useMemo(
+        () => [
+            {
+                id: 'eventName',
+                content: 'Event Name',
+                info: <EnumColumnDescription platformEnum={PlatformEnum.ResourceEvent} title="Event Name" />,
+                sortable: true,
+            },
+            {
+                id: 'resource',
+                content: 'Resource',
+                sort: 'asc',
+                sortable: true,
+            },
+            {
+                id: 'triggersCount',
+                content: 'Triggers Count',
+                sortable: true,
+            },
+            {
+                id: 'edit',
+                content: '',
+                width: '40px',
+            },
+        ],
+        [],
+    );
+
+    const dataRows: TableDataRow[] = useMemo(() => {
+        const eventTriggerEntries =
+            mode === 'association' ? Object.entries(eventTriggerAssociation ?? {}) : Object.entries(eventsSettings?.eventsMapping ?? {});
+
+        return eventTriggerEntries
+            .filter(([_, triggerUuids]) => triggerUuids.length > 0)
+            .map(([event, triggerUuids]) => {
+                const resourceEvent = getResourceEventModel(event);
+                return {
+                    id: event,
+                    columns: [
+                        mode === 'platform' ? (
+                            <Link key={event} to={`/events/detail/${event}`}>
+                                {getEnumLabel(resourceEventEnum, event)}
+                            </Link>
+                        ) : (
+                            getEnumLabel(resourceEventEnum, event)
+                        ),
+                        resourceEvent?.producedResource ? getEnumLabel(resourceEnum, resourceEvent.producedResource) : '',
+                        (triggerUuids?.length ?? 0).toString(),
+                        <Button
+                            variant="transparent"
+                            color="primary"
+                            title="Edit"
+                            key="edit"
+                            onClick={() => onEdit(event as ResourceEvent)}
+                            className="!p-1"
+                        >
+                            <Edit size={16} />
+                        </Button>,
+                    ],
+                };
+            });
+    }, [mode, eventTriggerAssociation, eventsSettings, getResourceEventModel, resourceEventEnum, resourceEnum, onEdit]);
+
+    const eventOptions = useMemo(() => {
+        const source = mode === 'association' ? resourceEvents : allResourceEvents;
+        const isUsed = (event: ResourceEvent) =>
+            mode === 'association' ? !!eventTriggerAssociation?.[event]?.length : !!eventsSettings?.eventsMapping?.[event]?.length;
+
+        return source
+            .filter((event) => !isUsed(event.event) || event.event === editedEvent)
+            .map((event) => ({
+                value: event.event,
+                label: getEnumLabel(resourceEventEnum, event.event),
+            }));
+    }, [mode, allResourceEvents, resourceEvents, eventTriggerAssociation, resourceEventEnum, eventsSettings, editedEvent]);
+
+    const buttons: WidgetButtonProps[] = useMemo(
+        () => [
+            {
+                icon: 'plus',
+                disabled: !eventOptions.length,
+                tooltip: textContent.addTooltip,
+                onClick: () => setIsTriggersDialogOpen(true),
+            },
+        ],
+        [eventOptions.length, textContent.addTooltip],
+    );
+
+    const defaultValues: FormValues = useMemo(() => {
+        const resourceEvent = getResourceEventModel(editedEvent);
+
+        if (!resourceEvent) return {};
+
+        return {
+            event: {
+                label: getEnumLabel(resourceEventEnum, resourceEvent.event),
+                value: resourceEvent.event,
+            },
+            resource: {
+                label: getEnumLabel(resourceEnum, resourceEvent.producedResource ?? Resource.None),
+                value: resourceEvent.producedResource ?? Resource.None,
+            },
+            triggerUuids:
+                mode === 'association'
+                    ? eventTriggerAssociation?.[resourceEvent.event]
+                    : (eventsSettings?.eventsMapping?.[resourceEvent.event] ?? []),
+        };
+    }, [editedEvent, eventTriggerAssociation, eventsSettings, getResourceEventModel, mode, resourceEnum, resourceEventEnum]);
+
+    const methods = useForm<FormValues>({
+        defaultValues,
+        mode: 'onChange',
+    });
+
+    const {
+        handleSubmit,
+        control,
+        setValue,
+        formState: { isSubmitting, isValid },
+        reset,
+    } = methods;
+
+    const formValues = useWatch({ control });
+
+    // Reset form when default values change and when the triggers dialog opens/closes
+    // so form state is cleared between dialog sessions.
+    useEffect(() => {
+        reset({
+            event: defaultValues.event,
+            resource: defaultValues.resource,
+            triggerUuids: defaultValues.triggerUuids,
+        });
+    }, [isTriggersDialogOpen, defaultValues, reset]);
+
+    const areDefaultValuesSame = useAreDefaultValuesSame(defaultValues);
+
+    return (
+        <>
+            <Widget
+                noBorder
+                title={textContent.title}
+                refreshAction={mode === 'association' ? fetchEventAssociations : fetchEventsSettings}
+                titleSize="large"
+                widgetButtons={buttons}
+                widgetLockName={widgetLocks}
+                lockSize="large"
+                busy={isBusy}
+                widgetInfoCard={{
+                    title: 'Information',
+                    description: textContent.description,
+                }}
+            >
+                <CustomTable headers={headers} data={dataRows} />
+            </Widget>
+            <Dialog
+                isOpen={isTriggersDialogOpen}
+                caption={textContent.dialogTitle}
+                size="xl"
+                body={
+                    <FormProvider {...methods}>
+                        <form onSubmit={handleSubmit(onSubmit)}>
+                            <div className="space-y-4">
+                                <Controller
+                                    name="event"
+                                    control={control}
+                                    render={({ field }) => (
+                                        <Select
+                                            id="event"
+                                            label="Event"
+                                            options={eventOptions}
+                                            value={field.value?.value ?? ''}
+                                            onChange={(value: OptionValue | { value: OptionValue; label: string } | null) => {
+                                                if (typeof value !== 'string') return;
+                                                const selectedOption = eventOptions.find((opt) => opt.value === value);
+                                                if (selectedOption) {
+                                                    field.onChange(selectedOption);
+                                                    const producedResource = getResourceEventModel(value)?.producedResource;
+
+                                                    if (producedResource) {
+                                                        setValue('resource', {
+                                                            value: producedResource,
+                                                            label: getEnumLabel(resourceEnum, producedResource),
+                                                        });
+                                                    }
+                                                    setValue('triggerUuids', []);
+                                                }
+                                            }}
+                                            isDisabled={!!editedEvent}
+                                            required
+                                        />
+                                    )}
+                                />
+                                {formValues.event?.value && (
+                                    <>
+                                        <Controller
+                                            name="resource"
+                                            control={control}
+                                            render={({ field }) => (
+                                                <Select
+                                                    id="resource"
+                                                    label="Resource"
+                                                    options={
+                                                        field.value
+                                                            ? [
+                                                                  {
+                                                                      value: field.value.value,
+                                                                      label: field.value.label,
+                                                                  },
+                                                              ]
+                                                            : []
+                                                    }
+                                                    value={field.value?.value ?? ''}
+                                                    onChange={() => {}}
+                                                    isDisabled
+                                                />
+                                            )}
+                                        />
+                                        <Controller
+                                            name="triggerUuids"
+                                            control={control}
+                                            render={({ field }) => (
+                                                <TriggerEditorWidget
+                                                    resource={formValues.resource?.value as Resource}
+                                                    event={formValues.event?.value as ResourceEvent}
+                                                    selectedTriggers={field.value ?? []}
+                                                    onSelectedTriggersChange={(e) => {
+                                                        field.onChange(e);
+                                                    }}
+                                                    noteText={`Only Triggers associated with the same Resource as the Event, and bound either to this Event or to no Event, are shown`}
+                                                />
+                                            )}
+                                        />
+                                    </>
+                                )}
+                                <Container className="flex-row justify-end modal-footer" gap={4}>
+                                    <Button variant="outline" disabled={isBusy || isSubmitting} onClick={onClose} type="button">
+                                        Cancel
+                                    </Button>
+                                    <ProgressButton
+                                        title={editedEvent ? 'Save' : textContent.confirmDialogButtonText}
+                                        inProgress={isSubmitting}
+                                        disabled={
+                                            isBusy ||
+                                            isSubmitting ||
+                                            !isValid ||
+                                            areDefaultValuesSame(formValues) ||
+                                            (!editedEvent && !formValues.triggerUuids?.length)
+                                        }
+                                        type="submit"
+                                    />
+                                </Container>
+                            </div>
+                        </form>
+                    </FormProvider>
+                }
+                toggle={onClose}
+            />
+        </>
+    );
+};
+
+export default EventsTable;

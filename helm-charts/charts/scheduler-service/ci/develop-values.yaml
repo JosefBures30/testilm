@@ -1,0 +1,17 @@
+global:
+  database:
+    pgBouncer:
+      enabled: false
+
+database:
+  host: "172.17.0.1"
+  # host: "host.docker.internal"
+
+image:
+  tag: develop-latest
+  pullPolicy: Always
+  pullSecrets:
+    - ilmcred
+
+messaging:
+  local: true

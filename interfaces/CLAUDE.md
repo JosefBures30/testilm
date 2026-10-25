@@ -1,0 +1,199 @@
+# CLAUDE.md
+
+General engineering principles and process guidance for working effectively on this codebase. Project-specific facts (build commands, architecture, package layout) belong in the README, scripts, or code itself — they can be derived from the repo. This file is for the things that aren't obvious from the code.
+
+## Working with reviews
+
+### Independent review pass on substantial PRs
+
+Before requesting human approval on a PR that introduces new control flow, transaction boundaries, or external-system interactions, run an independent code review with `copilot --allow-all-tools -p "..."` against the diff. Iterate: if a pass surfaces a finding, fix it, then re-run a focused pass on the fix specifically. Each review can find a sub-bug introduced by the previous fix; converge when a pass returns SHIP or only a single SUSPECT unrelated to the change under test.
+
+Focus the review prompt on **correctness, race conditions, state divergence, and information leaks**. Skip stylistic feedback — bots already cover that. The narrow first pass is faster and cheaper; widen to full PR scope for the final pass before approval. The first cycle's findings tend to be the highest-severity (real bugs); successive cycles converge on smaller issues until SHIP.
+
+### Static-analysis bot noise
+
+When a static-analysis bot keeps re-flagging the same finding on every push (line numbers shifting with each edit), don't keep replying with the same explanation — fix it structurally. Examples: broaden a `catch (SpecificException)` to `catch (Exception)` so the "unreachable catch" rule no longer applies; restructure a multi-line explanatory comment that contains code-like syntax into a Javadoc paragraph so the "commented-out code" detector stops matching. Suppression comments (`// NOSONAR`) are a last resort — restructure to obviate the warning whenever possible.
+
+### When to mark "won't fix" on review tools
+
+Reserve "won't fix" / "accept" markings for findings that are genuinely false positives or stylistic preferences that don't reflect a real issue. Add a per-issue rationale comment. If the finding keeps coming back across pushes, that's a signal to fix structurally instead.
+
+## Lombok and the JDK that runs Maven
+
+A clean checkout that suddenly fails to compile with dozens of "cannot find symbol" errors for Lombok-generated accessors — `getX()`, `setX()`, or "is not abstract and does not override" — is not a broken source tree. The compile ran on JDK 23 or newer, which no longer enables annotation processing implicitly, so Lombok never ran and every generated member vanished.
+
+The build targets Java 21. Check `mvn -version`, not `java -version`: a package-manager Maven can carry its own newer runtime while the shell's `java` is correct. Point `JAVA_HOME` at a 21 JDK for the build.
+
+## Coverage measurement parity
+
+Replicate the CI's coverage measurement locally before pushing. Read the project's `sonar.coverage.exclusions` from the build config (e.g. `pom.xml`) and apply the same exclusions when computing new-lines coverage against `git diff origin/main...HEAD`. The fast feedback avoids "passes locally but fails the gate" cycles.
+
+SonarCloud's `new_coverage` metric counts both line coverage AND branch coverage:
+
+```
+new_coverage = (covered_lines + covered_branches) / (lines_to_cover + branches_to_cover)
+```
+
+A purely line-based local script will systematically over-report. Match the formula.
+
+## Local Sonar findings the cloud profile does not raise
+
+`scripts/sonar-local.sh` runs an ephemeral SonarQube on its default rule set, which is wider than the profile SonarCloud applies to this project. Rules such as "too many parameters", "remove the `ApiResponses` wrapper" and "convert this optional parameter to an Object type" fire locally on code that SonarCloud reports nothing about, so a local finding is not by itself something to fix.
+
+The script also scopes its report to `git diff --name-only main...HEAD` against the *local* `main`, so fast-forward it first (`git fetch origin main:main`); after a rebase a stale local `main` lists every file that arrived from upstream as changed.
+
+Check before acting on one: `https://sonarcloud.io/api/issues/search?componentKeys=ilm_interfaces&rules=<rule>&resolved=false` returns the open count for that rule on the project. Zero alongside code on `main` that plainly breaks the rule means the rule is not in the applied profile. Treat SonarCloud on the pull request as authoritative, and use the local run for the rules it agrees on.
+
+## Tests that look green but cover nothing
+
+When a test passes but JaCoCo (or the coverage report) shows the relevant lines as uncovered, the test is reaching a different code path than expected — usually a `catch (Exception)` upstream is swallowing the actual flow before the asserted code runs. Investigate the trace, don't trust the green. Common signal: the assertion checks the *type* of an exception or response without checking the *origin*; the test passes because *any* exception of that type is thrown, including ones from setup steps.
+
+For logic deep in private methods or complex Spring contexts, extract a static testable kernel — a pure function that takes inputs and returns outputs — and unit-test it independently. Keep the integration test for the integration concerns (DB, AOP, transactions). The kernel + integration split makes both halves much easier to reason about.
+
+## One WireMock server per test class, not per test
+
+`BaseApiClient.prepareWebClient()` builds a single JVM-wide Reactor Netty connection pool that keeps idle connections to a host and port for 30 seconds (the `POOL_*` constants in `BaseApiClient`). A test class that starts a `WireMockServer(options().dynamicPort())` in `@BeforeEach` and stops it in `@AfterEach` burns one localhost port per test, and a full suite run burns them far faster than the pool releases them. When the operating system recycles a port the pool still holds a connection for, the request is written to a socket that no longer belongs to the current stub server — sometimes one that was serving HTTPS.
+
+The failures land in whichever client test happens to run next, not in the class that caused them, and they look nothing like a stubbing mistake: `WebClientRequestException: Line Feed must be preceded by Carriage Return`, `Client sent an HTTP request to an HTTPS server`, `Proxy key is incorrect`, or an expected validation failure that arrives as a bare `ConnectorServerException` instead. They reproduce roughly one run in four under `mvn -B -U verify` and almost never when the class runs alone, so a single green run proves nothing.
+
+Start the server in `@BeforeAll`, stop it in `@AfterAll`, and call `mockServer.resetAll()` in `@BeforeEach` — stubs and the request journal stay per test while the port stays put. `KeyApiClientTest` is the pattern. Only take a per-test server when the test needs the server itself to change, and say why in a comment.
+
+## Uploads are base64 in JSON, held as `UploadedFile`
+
+Every upload in the platform travels base64-encoded inside a JSON body; there is no multipart endpoint, and `KeyTransferWebContractTest` refuses one. A file that may carry key material is typed `UploadedFile` (`com.otilm.api.model.core.secret`), never `String` or `byte[]`: its deserializer decodes the token straight to bytes, refuses other types with a fixed message that quotes nothing, and the value is excluded from rendering and can be cleared. Request bodies that take a file extend `UploadRequestDto`, which carries the field, its size limit and the shared description.
+
+## Attributes on v2 connector surfaces are v3
+
+Every attribute published by or sent to a v2 connector interface must be a v3 attribute: `DataAttributeV3` in a schema, `RequestAttributeV3` in a request. The wire schema allows both, since `RequestAttribute` is a `oneOf` with a `version` discriminator, but a v2 content item names no content type, so go-sdk cannot decode it and a Go connector rejects the whole request with `400 INVALID_JSON`. Java decodes both versions, so a test against a Java connector or WireMock never shows the problem: assert on the wire instead, `"version":"v3"` on the attribute and a `contentType` on every content item.
+
+A reserved attribute gets a public `ATTRIBUTE_UUID`, its `definition(...)`, a `request(...)` writer and a reader here, so no caller builds one by hand or picks its envelope; `SignatureAlgorithmAttribute` and `KeyExportableAttribute` are the pattern. The reader of an attribute that was once stated as v2 keeps reading both versions, so a platform that has not upgraded is still understood.
+
+## Adding a field to a DTO with `@AllArgsConstructor`
+
+Adding a field grows the generated all-args constructor, so any caller in another repository that builds the class positionally stops compiling. Append the field last and declare the previous signature explicitly, delegating to the full constructor with the new field left at its default. `TokenInstanceDetailDto`, `TokenProfileDetailDto` and `KeyRequestDto` are the pattern, and `KeyTransferConstructorCompatibilityTest` is what holds those signatures in place. Appending last also matters on its own: a field inserted in the middle keeps the arity and silently reorders the parameters, which no compiler reports.
+
+## Numeric bounds on DTO fields: `@Min`/`@Max`, not `@Positive`/`@Negative`, beside `@Schema` bounds
+
+interface-documentation lints the generated OpenAPI with Redocly `recommended-strict`, which rejects a numeric schema carrying both `minimum` and `exclusiveMinimum` (or both `maximum` and `exclusiveMaximum`). swagger-core emits `@Min`/`@Max` and `@Schema(minimum/maximum)` as inclusive `minimum`/`maximum`; springdoc's runtime schema resolver (`SchemaUtils` in `springdoc-openapi-starter-common`, run by core, not by swagger-core) adds `@Positive`/`@Negative` as `exclusiveMinimum`/`exclusiveMaximum`. A field carrying an inclusive bound *and* `@Positive`/`@Negative` emits both keywords and fails that lint — silently from here, since this repo's build stays green, no `ModelConverters` test in this repo can observe the springdoc mapping (guard the annotations reflectively instead), and the break only appears when the docs are regenerated.
+
+Use `@Min(n)`/`@Max(n)` on integral fields; keep `@Positive`/`@Negative` for fields with no other bound. On `float`/`double`, where `@Min`/`@Max` don't fit, use `@DecimalMin`/`@DecimalMax` (inclusive) or `@Positive`/`@Negative` — the same one-bound-keyword-per-field rule applies. (springdoc maps `@PositiveOrZero`/`@NegativeOrZero` to an inclusive `0`, safe beside a matching `@Schema`.)
+
+```java
+@Schema(description = "...", minimum = "1")
+@Min(1) // not @Positive: springdoc adds a conflicting exclusiveMinimum at runtime
+private Integer frequency;
+```
+
+## Transactions and external calls
+
+**Don't hold a database transaction or row lock across an HTTP call to an external system.** A slow or unresponsive external dependency will hold locks and connections for its entire response time, blocking every other operation on the same resources.
+
+The standard pattern when a method must do both local writes and an external call:
+
+```java
+@Transactional(propagation = Propagation.NOT_SUPPORTED)  // method runs without ambient tx
+public ... someMethod(...) {
+    // 1. Read state, validate, build the request — outside any tx
+    // 2. Make the external call — outside any tx
+    // 3. Open an explicit transaction for the local writes
+    TransactionStatus tx = transactionManager.getTransaction(new DefaultTransactionDefinition());
+    try {
+        // local writes
+        transactionManager.commit(tx);
+    } catch (RuntimeException e) {
+        transactionManager.rollback(tx);
+        throw e;
+    }
+    // 4. Slow follow-up calls (e.g. cleanup, notifications) outside the tx
+}
+```
+
+Symmetrically: when the external call comes AFTER the local commit, commit first then call externally.
+
+## State divergence on post-external-commitment failures
+
+When an external system has acknowledged the work — DB committed, connector returned 200 or 202, queue accepted the message — do **not** roll back local state on a post-acknowledgment failure. Surface the local failure as a clear error to the caller, but leave local state aligned with the external commitment. Otherwise the platform DB drifts out of sync with reality and the only path back is manual reconciliation.
+
+The pattern:
+
+```java
+boolean externalAccepted = false;
+try {
+    externalCall(...);              // throws if external rejected
+    externalAccepted = true;
+    localStep1(...);                // may throw post-acceptance
+    localStep2(...);                // may throw post-acceptance
+} catch (Exception e) {
+    if (externalAccepted) {
+        // External committed; do NOT roll back local state. Surface the local failure.
+        throw new XyzException("External accepted but local update failed: " + e.getMessage());
+    }
+    // External itself failed — restore entry state.
+    restoreEntryState();
+    throw new XyzException("Failed: " + e.getMessage());
+}
+```
+
+Capture entry state before the external call (`final State entryState = entity.getState();`) so the restoration path has something to restore *to*.
+
+## Race conditions on multi-actor endpoints
+
+When multiple operator endpoints can mutate the same row, plain reads are not race-free even within a fresh transaction — concurrent transactions can both pass a state assertion (each reads "PENDING" before either commits) and then both write, with the second overwriting the first.
+
+Use pessimistic locking on the read-and-update path: a custom repository finder annotated with `@Lock(LockModeType.PESSIMISTIC_WRITE)` issues `SELECT … FOR UPDATE`. Combine with a state assertion right after the lock is held — if the state has changed, throw a domain exception with an actionable message ("operation X raced with operation Y; state is now Z").
+
+Don't span the lock across slow external calls (see "Transactions and external calls" above) — split the transaction so the lock covers only the local writes that need atomicity.
+
+## Don't leak runtime details to the wire
+
+Never forward raw `Exception.getMessage()` to a client / protocol response / external API. Runtime exceptions can carry SQL fragments (`DataIntegrityViolationException`), stack-frame class names, internal table or column identifiers, or upstream error detail that should not be exposed.
+
+Gate exposure on a controlled domain-exception type:
+
+```java
+String safeText = e instanceof OurDomainException && e.getMessage() != null
+        ? e.getMessage()           // shaped by us, safe to expose
+        : "generic safe placeholder";
+```
+
+This applies to PKI/CMP/SCEP `PKIFreeText`, ACME `error.detail`, REST API error responses, and any other surface where the message reaches an external party.
+
+## AI-written code: refactor before review
+
+Long methods (>80–100 lines) with heavy comment overhead are a smell. Refactor into named helpers before requesting human review:
+
+- Drop comments that restate what well-named code already does. `// Set the cert state to PENDING_ISSUE` above `cert.setState(PENDING_ISSUE)` is noise.
+- Replace block comments explaining a multi-step sequence with extracted methods whose names describe the step.
+- Comments are for the WHY (a non-obvious constraint, a workaround for a specific bug, a hidden invariant), not the WHAT.
+
+Reviewers' complaint "this looks AI-written" is about structure and comment density, not content. Match the codebase's existing method-length and comment norms before requesting review.
+
+## Plan and spec drift
+
+The design doc rarely survives implementation unchanged. Reconcile at PR-merge time: update the spec to reflect what was actually built, including patterns that emerged during implementation (transaction boundaries chosen, race-resolution approach, exception classifications). Future readers — humans and AI — need the spec to match the code.
+
+The implementation plan is a living TODO+done document, not a throwaway artifact. After shipping a milestone, mark complete, note deviations, and queue follow-up work explicitly. When the work spans multiple repos / sub-projects, the plan is the source of truth for "what's left next."
+
+## Tokens, secrets, and credentials
+
+When a user provides a credential (API token, key, password) for a one-off operation:
+
+- Use it once, in-memory only.
+- Don't persist to disk or memory beyond the immediate operation.
+- Remind the user to revoke it after.
+- If a credential needs re-use across an iterated workflow (multiple commits, multiple retries), still treat each invocation as one-shot — re-prompt rather than cache.
+
+## Writing for future AI sessions
+
+When writing code, comments, or docs, assume the next reader is an AI model with no conversation context. Prefer:
+
+- Self-explaining identifiers over comments
+- Method-level Javadoc on non-obvious behaviour over inline blocks
+- Spec docs that match the shipped code
+- A plan doc that names what's next
+
+Avoid:
+
+- "TODO: refactor later" without a specific target
+- Comments referring to PR numbers or review threads ("Fixed in PR #1234") — those rot fast
+- Comments restating method names or class purposes

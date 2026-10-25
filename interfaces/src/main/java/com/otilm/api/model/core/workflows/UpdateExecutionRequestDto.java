@@ -1,0 +1,23 @@
+package com.otilm.api.model.core.workflows;
+
+import com.otilm.api.model.common.validation.NullableNotBlank;
+import io.swagger.v3.oas.annotations.media.Schema;
+import java.util.ArrayList;
+import java.util.List;
+import lombok.Data;
+
+@Data
+public class UpdateExecutionRequestDto {
+
+    @Schema(description = "Name of the execution", requiredMode = Schema.RequiredMode.NOT_REQUIRED)
+    @NullableNotBlank
+    private String name;
+
+    @Schema(description = "Description of the execution")
+    private String description;
+
+    @Schema(description = "List of the execution items to add to execution",
+            requiredMode = Schema.RequiredMode.REQUIRED)
+    private List<ExecutionItemRequestDto> items = new ArrayList<>();
+
+}

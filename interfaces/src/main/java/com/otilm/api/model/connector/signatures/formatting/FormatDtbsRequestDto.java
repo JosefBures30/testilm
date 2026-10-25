@@ -1,0 +1,45 @@
+package com.otilm.api.model.connector.signatures.formatting;
+
+import com.fasterxml.jackson.annotation.JsonInclude;
+import com.fasterxml.jackson.annotation.JsonSubTypes;
+import com.fasterxml.jackson.annotation.JsonSubTypes.Type;
+import com.fasterxml.jackson.annotation.JsonTypeInfo;
+import com.otilm.api.model.client.attribute.RequestAttribute;
+import com.otilm.api.model.client.signing.profile.workflow.SigningWorkflowType;
+import io.swagger.v3.oas.annotations.media.Schema;
+import jakarta.validation.constraints.NotEmpty;
+import jakarta.validation.constraints.NotNull;
+import java.util.List;
+import lombok.Data;
+
+@Data
+@JsonInclude(JsonInclude.Include.NON_EMPTY)
+@JsonTypeInfo(use = JsonTypeInfo.Id.NAME, include = JsonTypeInfo.As.EXISTING_PROPERTY, property = "type",
+        visible = true)
+@JsonSubTypes({@Type(value = TimestampingFormatDtbsRequestDto.class, name = SigningWorkflowType.Codes.TIMESTAMPING)})
+@Schema(implementation = FormatDtbsInterface.class)
+public abstract class FormatDtbsRequestDto implements FormatDtbsInterface {
+
+    @NotNull
+    @Schema(description = "Signing workflow type discriminator", requiredMode = Schema.RequiredMode.REQUIRED)
+    private final SigningWorkflowType type;
+
+    @NotEmpty
+    @Schema(description = "Certificate chain where the first element is the signer certificate. Individual certificates are DER encoded X.509 certificates (represented as Base64 strings in the JSON transport).",
+            requiredMode = Schema.RequiredMode.REQUIRED)
+    private List<byte[]> certificateChain;
+
+    @NotNull
+    @Schema(description = "Data to be formatted into the protocol-specific data-to-be-signed bytes",
+            requiredMode = Schema.RequiredMode.REQUIRED)
+    private byte[] data;
+
+    @NotNull
+    @Schema(description = "Formatting-specific parameters (e.g. message imprint hash and algorithm, nonce, policy OID for TSA)",
+            requiredMode = Schema.RequiredMode.REQUIRED)
+    private List<RequestAttribute> formatAttributes;
+
+    protected FormatDtbsRequestDto(SigningWorkflowType type) {
+        this.type = type;
+    }
+}

@@ -1,0 +1,35 @@
+#!/bin/bash
+
+echo "Pre-build ILM CORE docker image"
+
+echo "Cleaning containers if exists"
+docker rm -f ilmcont 2>/dev/null || true
+docker rmi -f prebuild 2>/dev/null || true
+
+echo "Refreshing directory for data from container"
+rm -r data
+mkdir data
+
+echo "PreBuild build"
+docker build -f Dockerfile-pre -t prebuild .
+
+MVN_OPTS=""
+if [ "$SKIP_TESTS" = "true" ]; then
+  MVN_OPTS="-DskipTests"
+  echo "Skipping tests"
+fi
+
+echo "MVN Build"
+if [[ "$OSTYPE" == "darwin"* ]]; then
+  echo "MacOS detected, using TESTCONTAINERS_HOST_OVERRIDE"
+  docker run -e TESTCONTAINERS_HOST_OVERRIDE=docker.for.mac.host.internal -v /var/run/docker.sock:/var/run/docker.sock --name ilmcont -i prebuild mvn -f /home/app/pom.xml -U clean package $MVN_OPTS
+else
+  docker run -v /var/run/docker.sock:/var/run/docker.sock --name ilmcont -i prebuild mvn -f /home/app/pom.xml -U clean package $MVN_OPTS
+fi
+
+echo "Starting ilmcont"
+docker start ilmcont
+
+echo "Copy jar back to Tmp"
+docker cp ilmcont:/home/app/target data/target
+docker cp ilmcont:/home/app/docker data/docker

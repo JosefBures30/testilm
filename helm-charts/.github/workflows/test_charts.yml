@@ -1,0 +1,242 @@
+name: Test Charts
+on:
+  workflow_dispatch:
+    inputs:
+      pr_number:   { description: "PR number", required: true }
+      head_sha:    { description: "Head commit SHA", required: true }
+      head_repo:   { description: "Fork repo full_name", required: true }
+      head_branch: { description: "Fork branch", required: true }
+      base_ref:    { description: "Base branch", required: true }
+      run_id:      { description: "Upstream run ID", required: true }
+
+# What appears in the Actions list
+run-name: >-
+  Test Charts • PR #${{ inputs.pr_number }}
+  • ${{ inputs.head_repo }}@${{ inputs.head_branch }}
+  • ${{ inputs.head_sha }}
+
+permissions:
+  contents: read
+  checks: write
+  pull-requests: read
+
+jobs:
+  test:
+    name: Test • PR #${{ inputs.pr_number }}
+    runs-on: ubuntu-latest
+
+    services:
+      # Label used to access the service container
+      postgres:
+        # Docker Hub image
+        image: postgres:18
+        # Provide the password for postgres
+        env:
+          POSTGRES_USER: ilmuser
+          POSTGRES_PASSWORD: your-strong-password
+          POSTGRES_DB: ilmdb
+        ports:
+          - 5432:5432
+        # Set health checks to wait until postgres has started
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        volumes:
+          - ${{ github.workspace }}/initdb:/docker-entrypoint-initdb.d
+
+      mail:
+        image: mailserver/docker-mailserver:15.1.0
+        ports:
+          - 25:25
+        env:
+          SMTP_ONLY: 1
+          OVERRIDE_HOSTNAME: ilm.helm
+
+    steps:
+      - name: Export context
+        run: |
+          echo "PR_NUMBER=${{ inputs.pr_number }}"    >> $GITHUB_ENV
+          echo "HEAD_SHA=${{ inputs.head_sha }}"      >> $GITHUB_ENV
+          echo "HEAD_REPO=${{ inputs.head_repo }}"    >> $GITHUB_ENV
+          echo "PR_BRANCH=${{ inputs.head_branch }}"  >> $GITHUB_ENV
+          echo "BASE_BRANCH=${{ inputs.base_ref }}"   >> $GITHUB_ENV
+          echo "UPSTREAM_RUN_ID=${{ inputs.run_id }}" >> $GITHUB_ENV
+
+      - name: Generate token
+        id: app_token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.GH_APP_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+
+      - name: Create GitHub Check (in_progress)
+        id: create_check
+        uses: actions/github-script@v8
+        with:
+          github-token: ${{ steps.app_token.outputs.token }}
+          script: |
+            const check = await github.rest.checks.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              name: "Test Charts",
+              head_sha: process.env.HEAD_SHA,
+              status: "in_progress"
+            });
+            core.setOutput("check_id", check.data.id);
+
+      # Checkout fork PR branch + fetch base to compute diff
+      - uses: actions/checkout@v5
+        with:
+          repository: ${{ env.HEAD_REPO }}
+          ref: ${{ env.PR_BRANCH }}
+          fetch-depth: 0
+
+      - name: Fetch base branch
+        run: |
+          git remote add upstream ${{ github.event.repository.clone_url }}
+          git fetch upstream $BASE_BRANCH
+          git checkout -B "$BASE_BRANCH" "upstream/$BASE_BRANCH"
+          git checkout "$PR_BRANCH"
+          git clean -ffdx && git reset --hard HEAD
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.10.0
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+          check-latest: true
+
+      - name: Set up chart-testing
+        uses: helm/chart-testing-action@v2.7.0
+
+      - name: Detect Changed Charts
+        id: detect-changes
+        run: |
+          echo "Using base branch: $BASE_BRANCH"
+          echo "Using PR branch: $PR_BRANCH"
+
+          changed=$(ct list-changed --remote upstream --target-branch "$BASE_BRANCH")
+          echo "${changed}"
+
+          if [[ -n "$changed" ]]; then
+            echo "✅ Charts changed"
+            echo "changed=true" >> $GITHUB_ENV
+
+            # The ilm umbrella packages a frozen copy of every subchart, so a
+            # subchart-only change still needs the umbrella linted and installed.
+            # Record whether the umbrella itself is already in the changed set.
+            if echo "$changed" | grep -qx "charts/ilm"; then
+              echo "umbrella_in_set=true" >> $GITHUB_ENV
+            else
+              echo "umbrella_in_set=false" >> $GITHUB_ENV
+            fi
+
+            echo "changed_charts<<EOF" >> $GITHUB_ENV
+            echo "$changed" >> $GITHUB_ENV
+            echo "EOF" >> $GITHUB_ENV
+          else
+            echo "ℹ️ No chart changes detected"
+            echo "changed=false" >> $GITHUB_ENV
+          fi
+
+      - name: Skip testing when no charts changed
+        if: env.changed != 'true'
+        run: echo "No chart changes detected — skipping install tests." && exit 0
+
+      - name: Check for Development Versions (Non-release PRs)
+        if: env.changed == 'true' && !startsWith(env.PR_BRANCH, 'release')
+        env:
+          changed_charts: ${{ env.changed_charts }}
+        run: |
+          for CHART in $changed_charts; do
+            echo "🔍 Checking chart $CHART for development version"
+            version=$(yq ".version" < "${CHART}/Chart.yaml")
+            if [[ $version != *-develop ]]; then
+              echo "❌ Chart $CHART has version '$version' but should be a development version (*-develop)"
+              exit 1
+            fi
+          done
+
+      - name: Check for Non-Develop Versions (Release PRs)
+        if: env.changed == 'true' && startsWith(env.PR_BRANCH, 'release')
+        env:
+          changed_charts: ${{ env.changed_charts }}
+        run: |
+          for CHART in $changed_charts; do
+            echo "🔍 Checking chart $CHART for release-ready version"
+            version=$(yq ".version" < "${CHART}/Chart.yaml")
+            if [[ $version == *-develop ]]; then
+              echo "❌ Chart $CHART has development version '$version' in a release branch"
+              exit 1
+            fi
+          done
+
+      - name: Run chart-testing (lint)
+        if: env.changed == 'true'
+        run: ct lint --remote upstream --target-branch "$BASE_BRANCH" --check-version-increment=false
+
+      - name: Create kind cluster
+        uses: helm/kind-action@v1.13.0
+        if: env.changed == 'true'
+
+      - name: Create testing namespace
+        if: env.changed == 'true'
+        run: kubectl create namespace chart-testing
+
+      - name: Create pull secret
+        if: env.changed == 'true'
+        env:
+          REGISTRY_SERVER: hub.omnitrustregistry.com
+          REGISTRY_USERNAME: ${{ secrets.CONTAINER_REGISTRY_USERNAME }}
+          REGISTRY_PASSWORD: ${{ secrets.CONTAINER_REGISTRY_PASSWORD }}
+        run: |
+          echo "Creating pull secret for private registry"
+          kubectl create secret -n chart-testing docker-registry ilmcred \
+            --docker-server=$REGISTRY_SERVER \
+            --docker-username=$REGISTRY_USERNAME \
+            --docker-password=$REGISTRY_PASSWORD
+
+      - name: Run chart-testing (install)
+        if: env.changed == 'true'
+        run: ct install --remote upstream --namespace chart-testing --target-branch "$BASE_BRANCH" --excluded-charts ilm-lib
+
+      # ct only tests charts whose own files changed, so a subchart-only change
+      # skips the umbrella — yet the umbrella is what gets deployed. Lint and
+      # fully install it so the change is validated end-to-end before publish.
+      - name: Lint ilm umbrella (subchart change)
+        if: env.changed == 'true' && env.umbrella_in_set != 'true'
+        run: |
+          helm dependency update charts/ilm
+          ct lint --remote upstream --target-branch "$BASE_BRANCH" --charts charts/ilm --check-version-increment=false
+
+      - name: Install ilm umbrella (subchart change)
+        if: env.changed == 'true' && env.umbrella_in_set != 'true'
+        run: ct install --remote upstream --namespace chart-testing --charts charts/ilm
+
+      - name: Finalize GitHub Check
+        if: always()
+        uses: actions/github-script@v8
+        with:
+          github-token: ${{ steps.app_token.outputs.token }}
+          script: |
+            const checkId = "${{ steps.create_check.outputs.check_id }}";
+            const status = "${{ job.status }}";
+            const conclusions = { success: "success", failure: "failure", cancelled: "cancelled" };
+            const conclusion = conclusions[status] || "failure";
+            await github.rest.checks.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              check_run_id: checkId,
+              completed_at: new Date().toISOString(),
+              status: "completed",
+              conclusion,
+              output: {
+                title: "Test Charts Result",
+                summary: `✅ Helm chart test concluded with status: **${conclusion}**`,
+              }
+            });

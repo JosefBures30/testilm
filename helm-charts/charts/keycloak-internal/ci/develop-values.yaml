@@ -1,0 +1,15 @@
+global:
+  database:
+    host: "172.17.0.1"
+    pgBouncer:
+      enabled: false
+
+image:
+  tag: develop-latest
+
+keycloak:
+  dbSchema: "public"
+  args: [start, --optimized, --import-realm]
+
+ilm:
+  clientSecret: "s0qKH5qItTWoxpBt7Zrj348ZhZ7woAbk"

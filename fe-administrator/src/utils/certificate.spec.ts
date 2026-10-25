@@ -1,0 +1,245 @@
+import { describe, expect, test, vi } from 'vitest';
+import {
+    CertificateEventHistoryDtoStatusEnum,
+    CertificateState,
+    CertificateSubjectType,
+    CertificateValidationStatus,
+    ComplianceRuleStatus,
+    ComplianceStatus,
+} from 'types/openapi';
+import { runDownloadFileSuite } from './__tests__/anchor-download-mock';
+import { formatPEM, getCertificateStatusBadgeColor, getCertificateStatusColor, downloadFile } from './certificate';
+
+vi.mock('react-redux', () => ({
+    useSelector: vi.fn((selector: any) => selector({ enums: { platformEnums: {} } })),
+}));
+
+vi.mock('react', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('react')>();
+    return {
+        ...actual,
+        useCallback: (fn: any) => fn,
+    };
+});
+
+vi.mock('ducks/enums', () => ({
+    selectors: {
+        platformEnum: (key: string) => (state: any) => state?.enums?.platformEnums?.[key] ?? {},
+    },
+    getEnumLabel: (_enumObj: any, key: string) => key,
+}));
+
+const mockCreateObjectURL = vi.fn(() => 'blob:mock-url');
+Object.defineProperty(globalThis.URL, 'createObjectURL', { value: mockCreateObjectURL, writable: true });
+
+describe('certificate utils', () => {
+    describe('formatPEM', () => {
+        test('should format short PEM string', () => {
+            const result = formatPEM('short');
+            expect(result).toContain('-----BEGIN CERTIFICATE-----');
+            expect(result).toContain('-----END CERTIFICATE-----');
+            expect(result).toContain('short');
+        });
+
+        test('should format CSR when csr is true', () => {
+            const result = formatPEM('content', true);
+            expect(result).toContain('-----BEGIN CERTIFICATE REQUEST-----');
+            expect(result).toContain('-----END CERTIFICATE REQUEST-----');
+        });
+
+        test('should wrap long PEM string at 64 chars', () => {
+            const longString = 'a'.repeat(100);
+            const result = formatPEM(longString);
+            expect(result).toContain('-----BEGIN CERTIFICATE-----');
+            expect(result).toContain('-----END CERTIFICATE-----');
+            expect(result).toContain('a'.repeat(64));
+        });
+    });
+
+    describe('getCertificateStatusColor', () => {
+        test('should return correct colors for CertificateState', () => {
+            expect(getCertificateStatusColor(CertificateState.Issued)).toBe('#12a393');
+            expect(getCertificateStatusColor(CertificateState.Revoked)).toBe('#aa4545');
+            expect(getCertificateStatusColor(CertificateState.Failed)).toBe('#EF4444');
+            expect(getCertificateStatusColor(CertificateState.Requested)).toBe('#3f61be');
+        });
+
+        test('should return correct colors for CertificateValidationStatus', () => {
+            expect(getCertificateStatusColor(CertificateValidationStatus.Valid)).toBe('#12a393');
+            expect(getCertificateStatusColor(CertificateValidationStatus.Expired)).toBe('#EF4444');
+            expect(getCertificateStatusColor(CertificateValidationStatus.Expiring)).toBe('#b68b06');
+            expect(getCertificateStatusColor(CertificateValidationStatus.NotChecked)).toBe('#2798E7');
+        });
+
+        test('should return correct colors for ComplianceStatus', () => {
+            expect(getCertificateStatusColor(ComplianceStatus.Ok)).toBe('#12a393');
+            expect(getCertificateStatusColor(ComplianceStatus.Nok)).toBe('#EF4444');
+            expect(getCertificateStatusColor(ComplianceStatus.Na)).toBe('#6c757d');
+        });
+
+        test('should return correct colors for CertificateEventHistoryDtoStatusEnum', () => {
+            expect(getCertificateStatusColor(CertificateEventHistoryDtoStatusEnum.Success)).toBe('#12a393');
+            expect(getCertificateStatusColor(CertificateEventHistoryDtoStatusEnum.Failed)).toBe('#EF4444');
+        });
+
+        test('should return correct colors for CertificateSubjectType', () => {
+            expect(getCertificateStatusColor(CertificateSubjectType.RootCa)).toBe('#12a393');
+            expect(getCertificateStatusColor(CertificateSubjectType.EndEntity)).toBe('#6c757d');
+        });
+
+        test('should return correct colors for remaining CertificateState cases', () => {
+            expect(getCertificateStatusColor(CertificateState.PendingApproval)).toBe('#3f61be');
+            expect(getCertificateStatusColor(CertificateState.PendingIssue)).toBe('#3782a5');
+            expect(getCertificateStatusColor(CertificateState.PendingRevoke)).toBe('#eb3f33');
+            expect(getCertificateStatusColor(CertificateState.Rejected)).toBe('#EF4444');
+        });
+
+        test('should return correct colors for remaining CertificateValidationStatus cases', () => {
+            expect(getCertificateStatusColor(CertificateValidationStatus.Revoked)).toBe('#aa4545');
+            expect(getCertificateStatusColor(CertificateValidationStatus.Invalid)).toBe('#4f688c');
+            expect(getCertificateStatusColor(CertificateValidationStatus.Inactive)).toBe('#6c757d');
+        });
+
+        test('should return correct colors for ComplianceStatus NotChecked', () => {
+            expect(getCertificateStatusColor(ComplianceStatus.NotChecked)).toBe('#2798E7');
+        });
+
+        test('should return correct colors for ComplianceRuleStatus', () => {
+            expect(getCertificateStatusColor(ComplianceRuleStatus.Nok)).toBe('#EF4444');
+            expect(getCertificateStatusColor(ComplianceRuleStatus.Ok)).toBe('#12a393');
+            expect(getCertificateStatusColor(ComplianceRuleStatus.Na)).toBe('#6c757d');
+        });
+
+        test('should return correct colors for remaining CertificateSubjectType cases', () => {
+            expect(getCertificateStatusColor(CertificateSubjectType.SelfSignedEndEntity)).toBe('#b68b06');
+            expect(getCertificateStatusColor(CertificateSubjectType.IntermediateCa)).toBe('#3f61be');
+        });
+
+        test('should return default gray for unknown status', () => {
+            expect(getCertificateStatusColor('unknown' as any)).toBe('#6c757d');
+        });
+    });
+
+    describe('getCertificateStatusBadgeColor', () => {
+        test.each([
+            [CertificateState.Issued, 'success'],
+            [CertificateValidationStatus.Valid, 'success'],
+            [ComplianceStatus.Ok, 'success'],
+            [ComplianceRuleStatus.Ok, 'success'],
+            [CertificateEventHistoryDtoStatusEnum.Success, 'success'],
+            [CertificateSubjectType.RootCa, 'success'],
+            [CertificateState.Failed, 'danger'],
+            [CertificateState.Rejected, 'danger'],
+            [CertificateState.Revoked, 'danger'],
+            [CertificateState.PendingRevoke, 'danger'],
+            [CertificateValidationStatus.Expired, 'danger'],
+            [CertificateValidationStatus.Revoked, 'danger'],
+            [CertificateValidationStatus.Failed, 'danger'],
+            [CertificateValidationStatus.Invalid, 'danger'],
+            [ComplianceStatus.Nok, 'danger'],
+            [ComplianceRuleStatus.Nok, 'danger'],
+            [CertificateEventHistoryDtoStatusEnum.Failed, 'danger'],
+            [CertificateValidationStatus.Expiring, 'warning'],
+            [CertificateSubjectType.SelfSignedEndEntity, 'warning'],
+            [CertificateState.Requested, 'info'],
+            [CertificateState.PendingApproval, 'info'],
+            [CertificateState.PendingIssue, 'info'],
+            [CertificateState.Registered, 'info'],
+            [CertificateState.PendingRegistration, 'info'],
+            [CertificateValidationStatus.NotChecked, 'info'],
+            [ComplianceStatus.NotChecked, 'info'],
+            [CertificateSubjectType.IntermediateCa, 'info'],
+            [CertificateValidationStatus.Inactive, 'secondary'],
+            [ComplianceStatus.Na, 'secondary'],
+            [ComplianceRuleStatus.Na, 'secondary'],
+            [CertificateSubjectType.EndEntity, 'secondary'],
+        ] as const)('should map %s to the %s badge', (status, expected) => {
+            expect(getCertificateStatusBadgeColor(status)).toBe(expected);
+        });
+
+        test('should fall back to the neutral badge for an unknown status', () => {
+            expect(getCertificateStatusBadgeColor('unknown' as any)).toBe('secondary');
+        });
+    });
+
+    describe('downloadFile', () => {
+        runDownloadFileSuite(downloadFile, mockCreateObjectURL);
+    });
+});
+
+describe('useGetStatusText', () => {
+    test('returns status key as label (via getEnumLabel mock) for CertificateValidationStatus cases', async () => {
+        const { useGetStatusText } = await import('./certificate');
+        const getText = useGetStatusText();
+        expect(getText(CertificateValidationStatus.Valid)).toBe(CertificateValidationStatus.Valid);
+        expect(getText(CertificateValidationStatus.Invalid)).toBe(CertificateValidationStatus.Invalid);
+        expect(getText(CertificateValidationStatus.Expiring)).toBe(CertificateValidationStatus.Expiring);
+        expect(getText(CertificateValidationStatus.Expired)).toBe(CertificateValidationStatus.Expired);
+        expect(getText(CertificateValidationStatus.Revoked)).toBe(CertificateValidationStatus.Revoked);
+        expect(getText(CertificateValidationStatus.NotChecked)).toBe(CertificateValidationStatus.NotChecked);
+        expect(getText(CertificateValidationStatus.Inactive)).toBe(CertificateValidationStatus.Inactive);
+        expect(getText(CertificateValidationStatus.Failed)).toBe(CertificateValidationStatus.Failed);
+    });
+
+    test('returns status key for CertificateState cases', async () => {
+        const { useGetStatusText } = await import('./certificate');
+        const getText = useGetStatusText();
+        expect(getText(CertificateState.Revoked)).toBe(CertificateState.Revoked);
+        expect(getText(CertificateState.Requested)).toBe(CertificateState.Requested);
+        expect(getText(CertificateState.Rejected)).toBe(CertificateState.Rejected);
+        expect(getText(CertificateState.Issued)).toBe(CertificateState.Issued);
+        expect(getText(CertificateState.PendingApproval)).toBe(CertificateState.PendingApproval);
+        expect(getText(CertificateState.PendingIssue)).toBe(CertificateState.PendingIssue);
+        expect(getText(CertificateState.PendingRevoke)).toBe(CertificateState.PendingRevoke);
+        expect(getText(CertificateState.Registered)).toBe(CertificateState.Registered);
+        expect(getText(CertificateState.PendingRegistration)).toBe(CertificateState.PendingRegistration);
+    });
+
+    test('returns literal strings for CertificateEventHistoryDtoStatusEnum', async () => {
+        const { useGetStatusText } = await import('./certificate');
+        const getText = useGetStatusText();
+        expect(getText(CertificateEventHistoryDtoStatusEnum.Success)).toBe('Success');
+        expect(getText(CertificateEventHistoryDtoStatusEnum.Failed)).toBe('Failed');
+    });
+
+    test('returns status key for ComplianceStatus cases', async () => {
+        const { useGetStatusText } = await import('./certificate');
+        const getText = useGetStatusText();
+        expect(getText(ComplianceStatus.Ok)).toBe(ComplianceStatus.Ok);
+        expect(getText(ComplianceStatus.Nok)).toBe(ComplianceStatus.Nok);
+        expect(getText(ComplianceStatus.Na)).toBe(ComplianceStatus.Na);
+        expect(getText(ComplianceStatus.NotChecked)).toBe(ComplianceStatus.NotChecked);
+    });
+
+    test('returns status key for ComplianceRuleStatus cases', async () => {
+        const { useGetStatusText } = await import('./certificate');
+        const getText = useGetStatusText();
+        expect(getText(ComplianceRuleStatus.Ok)).toBe(ComplianceRuleStatus.Ok);
+        expect(getText(ComplianceRuleStatus.Nok)).toBe(ComplianceRuleStatus.Nok);
+        expect(getText(ComplianceRuleStatus.Na)).toBe(ComplianceRuleStatus.Na);
+    });
+
+    test('returns status key for CertificateSubjectType cases', async () => {
+        const { useGetStatusText } = await import('./certificate');
+        const getText = useGetStatusText();
+        expect(getText(CertificateSubjectType.EndEntity)).toBe(CertificateSubjectType.EndEntity);
+        expect(getText(CertificateSubjectType.SelfSignedEndEntity)).toBe(CertificateSubjectType.SelfSignedEndEntity);
+        expect(getText(CertificateSubjectType.IntermediateCa)).toBe(CertificateSubjectType.IntermediateCa);
+        expect(getText(CertificateSubjectType.RootCa)).toBe(CertificateSubjectType.RootCa);
+    });
+
+    test('returns Unknown for unrecognized status', async () => {
+        const { useGetStatusText } = await import('./certificate');
+        const getText = useGetStatusText();
+        expect(getText('completely-unknown' as any)).toBe('Unknown');
+    });
+});
+
+describe('getCertificateStatusColor registration states', () => {
+    test('returns a distinct color for Registered', () => {
+        expect(getCertificateStatusColor(CertificateState.Registered)).toBe('#8B5CF6');
+    });
+    test('returns a distinct color for PendingRegistration', () => {
+        expect(getCertificateStatusColor(CertificateState.PendingRegistration)).toBe('#9c7cf9');
+    });
+});
