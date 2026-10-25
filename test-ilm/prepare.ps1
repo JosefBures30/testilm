@@ -5,7 +5,7 @@ $ErrorActionPreference = 'Stop'
 $mount = "type=bind,source=$($env:TESTILM_ROOT),target=/workspace"
 & docker run --rm `
     --mount $mount `
-    --workdir /workspace/local-stack `
+    --workdir /workspace/test-ilm `
     --env TESTILM_ROOT=/workspace `
     python:3.12-alpine python prepare.py
 

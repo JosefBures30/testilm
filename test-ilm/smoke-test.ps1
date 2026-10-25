@@ -3,7 +3,7 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot '..\env.ps1')
 
 $baseUrl = 'http://localhost:8000'
-$envFile = Join-Path $env:TESTILM_ROOT 'local-stack\.env'
+$envFile = Join-Path $env:TESTILM_ROOT 'test-ilm\.env'
 if (-not (Test-Path $envFile)) {
     throw "Missing $envFile. Start the stack and run prepare.py first."
 }

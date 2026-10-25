@@ -1,0 +1,67 @@
+PS D:\OmniTrust\testIlm\test-ilm> docker compose up
+[+] up 13/13
+ ✔ Network ilm-local_default                    Created                                              0.1s
+ ✔ Container ilm-local-admin-certificate-1      Created                                              0.4s
+ ✔ Container ilm-local-frontend-administrator-1 Created                                              0.7s
+ ✔ Container ilm-local-postgres-1               Created                                              0.7s
+ ✔ Container ilm-local-auth-opa-policies-1      Created                                              0.6s
+ ✔ Container ilm-local-rabbitmq-1               Created                                              0.6s
+ ✔ Container ilm-local-opa-1                    Created                                              0.4s
+ ✔ Container ilm-local-auth-1                   Created                                              0.6s
+ ✔ Container ilm-local-scheduler-1              Created                                              0.6s
+ ✔ Container ilm-local-keycloak-1               Created                                              0.5s
+ ✔ Container ilm-local-core-1                   Created                                              0.2s
+ ✔ Container ilm-local-gateway-1                Created                                              0.3s
+ ✔ Container ilm-local-register-oidc-1          Created                                              0.4s
+Attaching to admin-certificate-1, auth-1, auth-opa-policies-1, core-1, frontend-administrator-1, gateway-1, keycloak-1, opa-1, postgres-1, rabbitmq-1, register-oidc-1, scheduler-1
+frontend-administrator-1  | /docker-entrypoint.sh: /docker-entrypoint.d/ is not empty, will attempt to perform configuration
+frontend-administrator-1  | /docker-entrypoint.sh: Looking for shell scripts in /docker-entrypoint.d/
+frontend-administrator-1  | /docker-entrypoint.sh: Launching /docker-entrypoint.d/10-listen-on-ipv6-by-default.sh
+frontend-administrator-1  | 10-listen-on-ipv6-by-default.sh: info: Getting the checksum of /etc/nginx/conf.d/default.conf
+frontend-administrator-1  | 10-listen-on-ipv6-by-default.sh: info: /etc/nginx/conf.d/default.conf differs from the packaged version
+frontend-administrator-1  | /docker-entrypoint.sh: Sourcing /docker-entrypoint.d/15-local-resolvers.envsh
+frontend-administrator-1  | /docker-entrypoint.sh: Launching /docker-entrypoint.d/20-envsubst-on-templates.sh
+frontend-administrator-1  | /docker-entrypoint.sh: Launching /docker-entrypoint.d/30-tune-worker-processes.sh
+frontend-administrator-1  | /docker-entrypoint.sh: Configuration complete; ready for start up
+frontend-administrator-1  | 2026/10/25 14:54:14 [notice] 1#1: using the "epoll" event method
+frontend-administrator-1  | 2026/10/25 14:54:14 [notice] 1#1: nginx/1.31.7
+frontend-administrator-1  | 2026/10/25 14:54:14 [notice] 1#1: built by gcc 15.2.0 (Alpine 15.2.0)
+frontend-administrator-1  | 2026/10/25 14:54:14 [notice] 1#1: OS: Linux 6.6.87.2-microsoft-standard-WSL2
+frontend-administrator-1  | 2026/10/25 14:54:14 [notice] 1#1: getrlimit(RLIMIT_NOFILE): 1048576:1048576
+frontend-administrator-1  | 2026/10/25 14:54:14 [notice] 1#1: start worker processes
+frontend-administrator-1  | 2026/10/25 14:54:14 [notice] 1#1: start worker process 29
+frontend-administrator-1  | 2026/10/25 14:54:14 [notice] 1#1: start worker process 30
+frontend-administrator-1  | 2026/10/25 14:54:14 [notice] 1#1: start worker process 31
+frontend-administrator-1  | 2026/10/25 14:54:14 [notice] 1#1: start worker process 32
+...
+
+PS D:\OmniTrust> docker ps
+CONTAINER ID   IMAGE                                                             COMMAND                  CREATED              STATUS                        PORTS                                                 NAMES
+22930df626d2   hub.omnitrustregistry.com/ilm/kong:3.9.1                          "/docker-entrypoint.…"   About a minute ago   Up About a minute (healthy)   127.0.0.1:8000->8000/tcp                              ilm-local-gateway-1
+f6c579a7d220   ilm/core:develop-latest                                           "/opt/otilm/entry.sh"    About a minute ago   Up About a minute                                                                   ilm-local-core-1
+f4d97179f93e   hub.omnitrustregistry.com/ilm/scheduler:develop-latest            "/opt/otilm/entry.sh"    About a minute ago   Up About a minute                                                                   ilm-local-scheduler-1
+bcf1be7d4fbf   hub.omnitrustregistry.com/ilm/auth:develop-latest                 "/opt/auth/entry.sh"     About a minute ago   Up About a minute                                                                   ilm-local-auth-1
+6d85531a420b   hub.omnitrustregistry.com/ilm/keycloak-optimized:develop-latest   "/opt/keycloak/bin/k…"   About a minute ago   Up About a minute             8080/tcp, 8443/tcp, 9000/tcp                          ilm-local-keycloak-1
+bd7bf0a6bb7d   hub.omnitrustregistry.com/ilm/opa:1.10.0-static                   "/opa run --server -…"   About a minute ago   Up About a minute                                                                   ilm-local-opa-1
+de58852172ae   postgres:17-alpine                                                "docker-entrypoint.s…"   About a minute ago   Up About a minute (healthy)   5432/tcp                                              ilm-local-postgres-1
+fc29ecd65e79   hub.omnitrustregistry.com/ilm/auth-opa-policies:develop-latest    "/docker-entrypoint.…"   About a minute ago   Up About a minute             8080/tcp                                              ilm-local-auth-opa-policies-1
+f6c47d50bd07   ilm/frontend-administrator:develop-latest                         "/docker-entrypoint.…"   About a minute ago   Up About a minute             8080/tcp                                              ilm-local-frontend-administrator-1
+3871ec2f260b   hub.omnitrustregistry.com/ilm/rabbitmq:4.2.0                      "docker-entrypoint.s…"   About a minute ago   Up About a minute (healthy)   4369/tcp, 5671-5672/tcp, 15691-15692/tcp, 25672/tcp   ilm-local-rabbitmq-1
+
+
+PS D:\OmniTrust\testIlm\test-ilm> docker compose down
+[+] down 13/13
+ ✔ Container ilm-local-gateway-1                Removed                                              1.8s
+ ✔ Container ilm-local-register-oidc-1          Removed                                              0.1s
+ ✔ Container ilm-local-admin-certificate-1      Removed                                              0.1s
+ ✔ Container ilm-local-frontend-administrator-1 Removed                                              0.6s
+ ✔ Container ilm-local-keycloak-1               Removed                                              2.4s
+ ✔ Container ilm-local-core-1                   Removed                                              3.6s
+ ✔ Container ilm-local-opa-1                    Removed                                              0.4s
+ ✔ Container ilm-local-scheduler-1              Removed                                              0.8s
+ ✔ Container ilm-local-auth-1                   Removed                                              3.5s
+ ✔ Container ilm-local-auth-opa-policies-1      Removed                                              0.6s
+ ✔ Container ilm-local-rabbitmq-1               Removed                                              1.7s
+ ✔ Container ilm-local-postgres-1               Removed                                              0.5s
+ ✔ Network ilm-local_default                    Removed                                              0.3s
+PS D:\OmniTrust\testIlm\local-stack>

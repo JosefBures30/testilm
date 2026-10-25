@@ -1,8 +1,8 @@
-# TestIlm
+# Test-Ilm
 
 This repository collects the ILM source projects and local development setup.
 
-## Project environment
+## Test project environment
 
 Load the environment file for your shell from the repository root. It sets
 `TESTILM_ROOT` to the repository directory without relying on a machine-specific
@@ -21,6 +21,11 @@ source ./env.sh
 ```
 
 The environment files contain no credentials. The local stack keeps generated
-development credentials in `local-stack/.env`, which is ignored by Git.
+development credentials in `test-ilm/.env`, which is ignored by Git.
 
-For local stack instructions, see [local-stack/README.md](./local-stack/README.md).
+For test details, see [test-ilm/README.md](./test-ilm/README.md).
+
+## Test project output folder
+
+Test folder is located in `.\test-ilm`, under which, there can be found details
+about test output - `.\test-ilm\output\test.md`

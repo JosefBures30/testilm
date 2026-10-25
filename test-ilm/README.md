@@ -1,4 +1,4 @@
-# Local ILM stack
+# Test ILM - Local stack
 
 This development-only Docker Compose stack runs Core, the administrator UI,
 Auth, OPA policies, Scheduler, RabbitMQ, PostgreSQL, Keycloak, and Kong. The
@@ -7,13 +7,13 @@ gateway publishes only on `127.0.0.1:8000`.
 From the repository root, prepare the generated realm and queue definitions:
 
 ```powershell
-.\local-stack\prepare.ps1
+.\test-ilm\prepare.ps1
 ```
 
 Then start the stack from this directory:
 
 ```powershell
-Set-Location .\local-stack
+Set-Location .\test-ilm
 docker compose --env-file .\.env -f .\compose.yaml up -d
 ```
 
